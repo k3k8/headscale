@@ -1064,6 +1064,36 @@ func TestEnsureHostname(t *testing.T) {
 			nodeKey:    "nkey12345678",
 			want:       "invalid-",
 		},
+		// iOS sends "localhost" as Hostname; DeviceModel carries the real identity.
+		{
+			name: "ios_localhost_with_known_apple_model",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname:    "localhost",
+				DeviceModel: "iPhone16,1",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "iphone-15-pro",
+		},
+		{
+			name: "ios_localhost_with_unknown_apple_model",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname:    "localhost",
+				DeviceModel: "iPhone99,9",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "iphone999", // NormaliseHostname strips the comma
+		},
+		{
+			name: "ios_localhost_without_device_model",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "localhost",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "localhost", // falls through; at least not "invalid-"
+		},
 	}
 
 	for _, tt := range tests {
