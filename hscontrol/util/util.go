@@ -291,8 +291,9 @@ func IsCI() bool {
 //
 // Strategy:
 // 1. If hostinfo is nil/empty → generate default from keys
-// 2. If hostname is provided → normalise it
-// 3. If normalisation fails → generate invalid-<random> replacement
+// 2. If hostname is "localhost" (common on iOS) → resolve via DeviceModel
+// 3. If hostname is provided → lowercase + validate
+// 4. If validation fails → generate invalid-<random> replacement
 //
 // Returns the guaranteed-valid hostname to use.
 func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) string {
@@ -310,6 +311,17 @@ func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) s
 		return "node-" + keyPrefix
 	}
 
+	// iOS clients send "localhost" as their hostname. When we encounter this
+	// generic placeholder, try to derive a meaningful name from DeviceModel
+	// (e.g. "iPhone16,1" → "iphone-15-pro").
+	if strings.ToLower(hostinfo.Hostname()) == "localhost" {
+		if model := hostinfo.DeviceModel(); model != "" {
+			if name := hostnameFromDeviceModel(model); name != "" {
+				return name
+			}
+		}
+	}
+
 	lowercased := strings.ToLower(hostinfo.Hostname())
 
 	err := ValidateHostname(lowercased)
@@ -318,6 +330,23 @@ func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) s
 	}
 
 	return InvalidString()
+}
+
+// hostnameFromDeviceModel derives a DNS-safe hostname from a device model
+// string. It first consults the Apple device lookup table; if the model is
+// not found there it falls back to NormaliseHostname so that at least the
+// raw identifier (e.g. "iphone161") is used rather than "localhost".
+func hostnameFromDeviceModel(model string) string {
+	if name := lookupAppleDeviceModel(model); name != "" {
+		return name
+	}
+
+	name, err := NormaliseHostname(model)
+	if err != nil {
+		return ""
+	}
+
+	return name
 }
 
 // GenerateRegistrationKey generates a vanity key for tracking web authentication
