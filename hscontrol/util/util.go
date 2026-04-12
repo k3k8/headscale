@@ -316,7 +316,7 @@ func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) s
 	// (e.g. "iPhone16,1" → "iphone-15-pro").
 	if strings.ToLower(hostinfo.Hostname()) == "localhost" {
 		if model := hostinfo.DeviceModel(); model != "" {
-			if name := hostnameFromDeviceModel(model); name != "" {
+			if name := HostnameFromDeviceModel(model); name != "" {
 				return name
 			}
 		}
@@ -330,11 +330,11 @@ func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) s
 	return sanitized
 }
 
-// hostnameFromDeviceModel derives a DNS-safe hostname from a device model
+// HostnameFromDeviceModel derives a DNS-safe hostname from a device model
 // string. It first consults the Apple device lookup table; if the model is
 // not found there it falls back to dnsname.SanitizeHostname so that at least
 // the raw identifier (e.g. "iphone99-9") is used rather than "localhost".
-func hostnameFromDeviceModel(model string) string {
+func HostnameFromDeviceModel(model string) string {
 	if name := lookupAppleDeviceModel(model); name != "" {
 		return name
 	}

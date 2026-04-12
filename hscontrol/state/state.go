@@ -2562,9 +2562,19 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 				// Hostname would produce (possibly with a "-N" collision bump).
 				autoDerived := isAutoDerivedGivenName(currentNode.GivenName, currentNode.Hostname)
 
-				currentNode.Hostname = req.Hostinfo.Hostname
+				hostname := req.Hostinfo.Hostname
+				// iOS clients send "localhost" on every MapRequest. Resolve via
+				// DeviceModel so we don't clobber the meaningful name set at
+				// registration time (e.g. "iphone-15-pro").
+				if strings.ToLower(hostname) == "localhost" && req.Hostinfo.DeviceModel != "" {
+					if resolved := util.HostnameFromDeviceModel(req.Hostinfo.DeviceModel); resolved != "" {
+						hostname = resolved
+					}
+				}
+
+				currentNode.Hostname = hostname
 				if autoDerived {
-					currentNode.GivenName = dnsname.SanitizeHostname(req.Hostinfo.Hostname)
+					currentNode.GivenName = dnsname.SanitizeHostname(hostname)
 					// NodeStore.UpdateNode auto-bumps GivenName on collision.
 				}
 			}
