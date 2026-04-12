@@ -1,6 +1,7 @@
 package util
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -11,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"tailscale.com/tailcfg"
 	"tailscale.com/util/cmpver"
+	"tailscale.com/util/dnsname"
 )
 
 // URL parsing errors.
@@ -279,6 +282,65 @@ func IsCI() bool {
 
 	return false
 }
+
+// EnsureHostname guarantees a valid hostname for node registration.
+// It extracts a hostname from Hostinfo, providing sensible defaults
+// if Hostinfo is nil or Hostname is empty.
+// The hostname is sanitized via dnsname.SanitizeHostname (lowercase, invalid
+// chars stripped, separators converted to hyphens, truncated to 63 chars).
+// This function never fails - it always returns a valid hostname.
+//
+// Strategy:
+// 1. If hostinfo is nil/empty → generate default from keys
+// 2. If hostname is "localhost" (common on iOS) → resolve via DeviceModel
+// 3. If hostname is provided → sanitize with dnsname.SanitizeHostname
+// 4. If sanitization yields empty → fall back to key prefix
+func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) string {
+	keyFallback := func() string {
+		key := cmp.Or(machineKey, nodeKey)
+		if key == "" {
+			return "unknown-node"
+		}
+		if len(key) > 8 {
+			key = key[:8]
+		}
+		return "node-" + key
+	}
+
+	if !hostinfo.Valid() || hostinfo.Hostname() == "" {
+		return keyFallback()
+	}
+
+	// iOS clients send "localhost" as their hostname. When we encounter this
+	// generic placeholder, try to derive a meaningful name from DeviceModel
+	// (e.g. "iPhone16,1" → "iphone-15-pro").
+	if strings.ToLower(hostinfo.Hostname()) == "localhost" {
+		if model := hostinfo.DeviceModel(); model != "" {
+			if name := hostnameFromDeviceModel(model); name != "" {
+				return name
+			}
+		}
+	}
+
+	sanitized := dnsname.SanitizeHostname(hostinfo.Hostname())
+	if sanitized == "" {
+		return keyFallback()
+	}
+
+	return sanitized
+}
+
+// hostnameFromDeviceModel derives a DNS-safe hostname from a device model
+// string. It first consults the Apple device lookup table; if the model is
+// not found there it falls back to dnsname.SanitizeHostname so that at least
+// the raw identifier (e.g. "iphone99-9") is used rather than "localhost".
+func hostnameFromDeviceModel(model string) string {
+	if name := lookupAppleDeviceModel(model); name != "" {
+		return name
+	}
+	return dnsname.SanitizeHostname(model)
+}
+
 
 // GenerateRegistrationKey generates a vanity key for tracking web authentication
 // registration flows in logs. This key is NOT stored in the database and does NOT use bcrypt -

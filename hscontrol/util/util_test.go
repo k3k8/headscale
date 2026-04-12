@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"tailscale.com/tailcfg"
 )
+
+const testUnknownNode = "unknown-node"
 
 func TestTailscaleVersionNewerOrEqual(t *testing.T) {
 	type args struct {
@@ -793,6 +796,549 @@ over a maximum of 30 hops:
 				t.Errorf("Error message: got %q, want %q", gotErr.Error(), wantErr.Error())
 			}
 		})
+	}
+}
+
+func TestEnsureHostname(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		hostinfo   *tailcfg.Hostinfo
+		machineKey string
+		nodeKey    string
+		want       string
+	}{
+		{
+			name: "valid_hostname",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "test-node",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "test-node",
+		},
+		{
+			name:       "nil_hostinfo_with_machine_key",
+			hostinfo:   nil,
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-mkey1234",
+		},
+		{
+			name:       "nil_hostinfo_with_node_key_only",
+			hostinfo:   nil,
+			machineKey: "",
+			nodeKey:    "nkey12345678",
+			want:       "node-nkey1234",
+		},
+		{
+			name:       "nil_hostinfo_no_keys",
+			hostinfo:   nil,
+			machineKey: "",
+			nodeKey:    "",
+			want:       testUnknownNode,
+		},
+		{
+			name: "empty_hostname_with_machine_key",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-mkey1234",
+		},
+		{
+			name: "empty_hostname_with_node_key_only",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "",
+			},
+			machineKey: "",
+			nodeKey:    "nkey12345678",
+			want:       "node-nkey1234",
+		},
+		{
+			name: "empty_hostname_no_keys",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "",
+			},
+			machineKey: "",
+			nodeKey:    "",
+			want:       testUnknownNode,
+		},
+		{
+			name: "hostname_exactly_63_chars",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "123456789012345678901234567890123456789012345678901234567890123",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "123456789012345678901234567890123456789012345678901234567890123",
+		},
+		{
+			// dnsname.SanitizeHostname truncates to 63 chars rather than rejecting.
+			name: "hostname_64_chars_truncated",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "1234567890123456789012345678901234567890123456789012345678901234",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "123456789012345678901234567890123456789012345678901234567890123",
+		},
+		{
+			name: "hostname_very_long_truncated",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "test-node-with-very-long-hostname-that-exceeds-dns-label-limits-of-63-characters-and-should-be-truncated",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "test-node-with-very-long-hostname-that-exceeds-dns-label-limits",
+		},
+		{
+			// Trailing invalid chars are stripped; result is the valid prefix.
+			name: "hostname_with_special_chars",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "node-with-special!@#$%",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-with-special",
+		},
+		{
+			// Non-ASCII bytes are dropped; only ASCII alphanum/hyphens remain.
+			name: "hostname_with_unicode",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "node-ñoño-测试", //nolint:gosmopolitan
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-oo",
+		},
+		{
+			name: "short_machine_key",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "",
+			},
+			machineKey: "short",
+			nodeKey:    "nkey12345678",
+			want:       "node-short",
+		},
+		{
+			name: "short_node_key",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "",
+			},
+			machineKey: "",
+			nodeKey:    "short",
+			want:       "node-short",
+		},
+		{
+			// Trailing emoji bytes are stripped; valid ASCII prefix is kept.
+			name: "hostname_with_emoji_replaced",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "hostname-with-\U0001f4a9",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "hostname-with",
+		},
+		{
+			// All-emoji hostname -> empty after sanitize -> key prefix fallback.
+			name: "hostname_only_emoji_replaced",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "\U0001f680",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-mkey1234",
+		},
+		{
+			// Emoji bytes between ASCII text are dropped; hyphens are preserved.
+			name: "hostname_with_multiple_emojis_replaced",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "node-\U0001f389-\U0001f680-test",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node---test",
+		},
+		{
+			name: "uppercase_to_lowercase",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "User2-Host",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "user2-host",
+		},
+		{
+			// Underscores are separators in dnsname and become hyphens.
+			name: "underscore_converted_to_hyphen",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "test_node",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "test-node",
+		},
+		{
+			// '@' is a separator in dnsname and becomes a hyphen.
+			name: "at_sign_converted_to_hyphen",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "Test@Host",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "test-host",
+		},
+		{
+			// Non-ASCII bytes are dropped; hyphens collapse where they meet.
+			name: "chinese_chars_with_dash",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "server-北京-01", //nolint:gosmopolitan
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "server--01",
+		},
+		{
+			// All-CJK hostname -> empty after sanitize -> key prefix fallback.
+			name: "chinese_only_fallback",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "我的电脑", //nolint:gosmopolitan
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-mkey1234",
+		},
+		{
+			// Trailing emoji bytes are stripped; valid ASCII prefix remains.
+			name: "emoji_with_text_prefix",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "laptop-\U0001f680",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "laptop",
+		},
+		{
+			// All non-ASCII -> empty -> key prefix fallback.
+			name: "mixed_chinese_emoji_fallback",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "测试\U0001f4bb机器", //nolint:gosmopolitan // intentional i18n test data
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-mkey1234",
+		},
+		{
+			// All emoji -> empty -> key prefix fallback.
+			name: "only_emojis_fallback",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "\U0001f389\U0001f38a",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-mkey1234",
+		},
+		{
+			// '@' is a separator; all-separator string -> empty -> key prefix fallback.
+			name: "only_at_signs_fallback",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "@@@",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "node-mkey1234",
+		},
+		{
+			// Leading hyphen is stripped by SanitizeLabel.
+			name: "starts_with_dash_stripped",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "-test",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "test",
+		},
+		{
+			// Trailing hyphen is stripped by SanitizeLabel.
+			name: "ends_with_dash_stripped",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "test-",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "test",
+		},
+		{
+			name: "very_long_hostname_truncated",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: strings.Repeat("t", 70),
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       strings.Repeat("t", 63),
+		},
+		// iOS sends "localhost" as Hostname; DeviceModel carries the real identity.
+		{
+			name: "ios_localhost_with_known_apple_model",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname:    "localhost",
+				DeviceModel: "iPhone16,1",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "iphone-15-pro",
+		},
+		{
+			// Unknown model: comma is dropped by SanitizeHostname, yielding "iphone999".
+			name: "ios_localhost_with_unknown_apple_model",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname:    "localhost",
+				DeviceModel: "iPhone99,9",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "iphone999",
+		},
+		{
+			name: "ios_localhost_without_device_model",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "localhost",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "localhost",
+		},
+		// macOS sends hostnames like "MacBook Pro (6).local"; dnsname handles all of it.
+		{
+			name: "macos_hostname_with_local_suffix",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "MacBook Pro (6).local",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "macbook-pro-6",
+		},
+		{
+			name: "macos_hostname_with_apostrophe",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "Test's MacBook Pro.local",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "tests-macbook-pro",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := EnsureHostname(tt.hostinfo.View(), tt.machineKey, tt.nodeKey)
+			if got != tt.want {
+				t.Errorf("EnsureHostname() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnsureHostnameWithHostinfo(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		hostinfo      *tailcfg.Hostinfo
+		machineKey    string
+		nodeKey       string
+		wantHostname  string
+		checkHostinfo func(*testing.T, *tailcfg.Hostinfo)
+	}{
+		{
+			name: "valid_hostinfo_unchanged",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "test-node",
+				OS:       "linux",
+			},
+			machineKey:   "mkey12345678",
+			nodeKey:      "nkey12345678",
+			wantHostname: "test-node",
+			checkHostinfo: func(t *testing.T, hi *tailcfg.Hostinfo) { //nolint:thelper
+				if hi == nil {
+					t.Fatal("hostinfo should not be nil")
+				}
+
+				if hi.Hostname != "test-node" {
+					t.Errorf("hostname = %v, want test-node", hi.Hostname)
+				}
+
+				if hi.OS != "linux" {
+					t.Errorf("OS = %v, want linux", hi.OS)
+				}
+			},
+		},
+		{
+			name:         "nil_hostinfo_creates_default",
+			hostinfo:     nil,
+			machineKey:   "mkey12345678",
+			nodeKey:      "nkey12345678",
+			wantHostname: "node-mkey1234",
+		},
+		{
+			name: "empty_hostname_updated",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "",
+				OS:       "darwin",
+			},
+			machineKey:   "mkey12345678",
+			nodeKey:      "nkey12345678",
+			wantHostname: "node-mkey1234",
+		},
+		{
+			// Long hostname is truncated to 63 chars, not rejected.
+			name: "long_hostname_truncated",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "test-node-with-very-long-hostname-that-exceeds-dns-label-limits-of-63-characters",
+			},
+			machineKey:   "mkey12345678",
+			nodeKey:      "nkey12345678",
+			wantHostname: "test-node-with-very-long-hostname-that-exceeds-dns-label-limits",
+		},
+		{
+			name:         "nil_hostinfo_node_key_only",
+			hostinfo:     nil,
+			machineKey:   "",
+			nodeKey:      "nkey12345678",
+			wantHostname: "node-nkey1234",
+		},
+		{
+			name:         "nil_hostinfo_no_keys",
+			hostinfo:     nil,
+			machineKey:   "",
+			nodeKey:      "",
+			wantHostname: testUnknownNode,
+		},
+		{
+			name: "empty_hostname_no_keys",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "",
+			},
+			machineKey:   "",
+			nodeKey:      "",
+			wantHostname: testUnknownNode,
+		},
+		{
+			name: "preserves_other_fields",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname:     "test",
+				OS:           "windows",
+				OSVersion:    "10.0.19044",
+				DeviceModel:  "test-device",
+				BackendLogID: "log123",
+			},
+			machineKey:   "mkey12345678",
+			nodeKey:      "nkey12345678",
+			wantHostname: "test",
+			checkHostinfo: func(t *testing.T, hi *tailcfg.Hostinfo) { //nolint:thelper
+				if hi == nil {
+					t.Fatal("hostinfo should not be nil")
+				}
+
+				if hi.Hostname != "test" {
+					t.Errorf("hostname = %v, want test", hi.Hostname)
+				}
+
+				if hi.OS != "windows" {
+					t.Errorf("OS = %v, want windows", hi.OS)
+				}
+
+				if hi.OSVersion != "10.0.19044" {
+					t.Errorf("OSVersion = %v, want 10.0.19044", hi.OSVersion)
+				}
+
+				if hi.DeviceModel != "test-device" {
+					t.Errorf("DeviceModel = %v, want test-device", hi.DeviceModel)
+				}
+
+				if hi.BackendLogID != "log123" {
+					t.Errorf("BackendLogID = %v, want log123", hi.BackendLogID)
+				}
+			},
+		},
+		{
+			name: "exactly_63_chars_unchanged",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "123456789012345678901234567890123456789012345678901234567890123",
+			},
+			machineKey:   "mkey12345678",
+			nodeKey:      "nkey12345678",
+			wantHostname: "123456789012345678901234567890123456789012345678901234567890123",
+			checkHostinfo: func(t *testing.T, hi *tailcfg.Hostinfo) { //nolint:thelper
+				if hi == nil {
+					t.Fatal("hostinfo should not be nil")
+				}
+
+				if len(hi.Hostname) != 63 {
+					t.Errorf("hostname length = %v, want 63", len(hi.Hostname))
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotHostname := EnsureHostname(tt.hostinfo.View(), tt.machineKey, tt.nodeKey)
+			if gotHostname != tt.wantHostname {
+				t.Errorf("EnsureHostname() hostname = %v, want %v", gotHostname, tt.wantHostname)
+			}
+
+			if tt.checkHostinfo != nil {
+				tt.checkHostinfo(t, tt.hostinfo)
+			}
+		})
+	}
+}
+
+func TestEnsureHostname_DNSLabelLimit(t *testing.T) {
+	t.Parallel()
+
+	testCases := []string{
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	}
+
+	for i, hostname := range testCases {
+		t.Run(cmp.Diff("", ""), func(t *testing.T) {
+			t.Parallel()
+
+			hostinfo := &tailcfg.Hostinfo{Hostname: hostname}
+
+			result := EnsureHostname(hostinfo.View(), "mkey", "nkey")
+			if len(result) > 63 {
+				t.Errorf("test case %d: hostname length = %d, want <= 63", i, len(result))
+			}
+		})
+	}
+}
+
+func TestEnsureHostname_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	originalHostinfo := &tailcfg.Hostinfo{
+		Hostname: "test-node",
+		OS:       "linux",
+	}
+
+	hostname1 := EnsureHostname(originalHostinfo.View(), "mkey", "nkey")
+	hostname2 := EnsureHostname(originalHostinfo.View(), "mkey", "nkey")
+
+	if hostname1 != hostname2 {
+		t.Errorf("hostnames not equal: %v != %v", hostname1, hostname2)
 	}
 }
 
