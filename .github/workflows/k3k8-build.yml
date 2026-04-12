@@ -1,6 +1,9 @@
 ---
 # Fork-specific workflow for k3k8/headscale.
-# Builds and pushes a Docker image to ghcr.io/k3k8/headscale on every push to main.
+# Builds and pushes a Docker image to ghcr.io/k3k8/headscale on version tags.
+#
+# Trigger: push a tag like "v0.25.1-k3k8.1" to kick off a build.
+# The image is tagged with both the git tag and the short commit SHA.
 #
 # Upstream workflows are intentionally removed in the same commit so that
 # merging upstream does not re-introduce failed/noisy runs.
@@ -8,17 +11,12 @@ name: k3k8 Build
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "*.nix"
-      - "go.*"
-      - "**/*.go"
-      - ".github/workflows/k3k8-build.yml"
+    tags:
+      - "v*"
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.sha }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -57,5 +55,5 @@ jobs:
           nix develop --command -- ko build \
             --bare \
             --platform=linux/amd64,linux/arm64 \
-            --tags=main,main-${GITHUB_SHA::7} \
+            --tags=${GITHUB_REF_NAME},sha-${GITHUB_SHA::7} \
             ./cmd/headscale
