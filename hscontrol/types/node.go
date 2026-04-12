@@ -641,6 +641,15 @@ func (node *Node) ApplyHostnameFromHostInfo(hostInfo *tailcfg.Hostinfo) {
 
 	newHostname := strings.ToLower(hostInfo.Hostname)
 
+	// iOS clients send "localhost" as their Hostname. Resolve it the same
+	// way EnsureHostname does at registration time, so MapRequest updates
+	// don't clobber the meaningful name we stored.
+	if newHostname == "localhost" && hostInfo.DeviceModel != "" {
+		if resolved := util.HostnameFromDeviceModel(hostInfo.DeviceModel); resolved != "" {
+			newHostname = resolved
+		}
+	}
+
 	err := util.ValidateHostname(newHostname)
 	if err != nil {
 		log.Warn().
