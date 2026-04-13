@@ -555,30 +555,10 @@ func EnsureUniqueGivenName(
 		return givenName, nil
 	}
 
-	// If name is not unique, try adding username
-	prefix := givenName
-	if username != "" {
-		safeUser, err := util.NormaliseHostname(username)
-		if err == nil {
-			candidate := fmt.Sprintf("%s-%s", givenName, safeUser)
-			if len(candidate) > util.LabelHostnameLength {
-				candidate = candidate[:util.LabelHostnameLength]
-			}
-			unique, err := isUniqueName(tx, candidate)
-			if err != nil {
-				return "", err
-			}
-			if unique {
-				return candidate, nil
-			}
-			prefix = candidate
-		}
-	}
-
 	// Still not unique, try adding sequential numbers
 	for i := 1; i < 100; i++ {
 		suffix := fmt.Sprintf("-%d", i)
-		candidate := prefix
+		candidate := givenName
 		if len(candidate)+len(suffix) > util.LabelHostnameLength {
 			candidate = candidate[:util.LabelHostnameLength-len(suffix)]
 		}
