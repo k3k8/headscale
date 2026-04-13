@@ -882,7 +882,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "123456789012345678901234567890123456789012345678901234567890123",
 		},
 		{
 			name: "hostname_very_long_truncated",
@@ -891,7 +891,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "test-node-with-very-long-hostname-that-exceeds-dns-label-limits",
 		},
 		{
 			name: "hostname_with_special_chars",
@@ -900,7 +900,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "node-with-special",
 		},
 		{
 			name: "hostname_with_unicode",
@@ -909,7 +909,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "node-oo",
 		},
 		{
 			name: "short_machine_key",
@@ -936,7 +936,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "hostname-with",
 		},
 		{
 			name: "hostname_only_emoji_replaced",
@@ -954,7 +954,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "node---test",
 		},
 		{
 			name: "uppercase_to_lowercase",
@@ -972,7 +972,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "testnode",
 		},
 		{
 			name: "at_sign_invalid",
@@ -981,7 +981,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "testhost",
 		},
 		{
 			name: "chinese_chars_with_dash_invalid",
@@ -990,7 +990,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "server--01",
 		},
 		{
 			name: "chinese_only_invalid",
@@ -1008,16 +1008,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
-		},
-		{
-			name: "mixed_chinese_emoji_invalid",
-			hostinfo: &tailcfg.Hostinfo{
-				Hostname: "测试💻机器", //nolint:gosmopolitan // intentional i18n test data
-			},
-			machineKey: "mkey12345678",
-			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "laptop",
 		},
 		{
 			name: "only_emojis_invalid",
@@ -1044,7 +1035,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "test",
 		},
 		{
 			name: "ends_with_dash_invalid",
@@ -1053,7 +1044,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       "test",
 		},
 		{
 			name: "very_long_hostname_truncated",
@@ -1062,7 +1053,7 @@ func TestEnsureHostname(t *testing.T) {
 			},
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
-			want:       "invalid-",
+			want:       strings.Repeat("t", 63),
 		},
 		// iOS sends "localhost" as Hostname; DeviceModel carries the real identity.
 		{
@@ -1093,6 +1084,34 @@ func TestEnsureHostname(t *testing.T) {
 			machineKey: "mkey12345678",
 			nodeKey:    "nkey12345678",
 			want:       "localhost", // falls through; at least not "invalid-"
+		},
+		// New tests for macOS / macOS-like hostnames
+		{
+			name: "macos_bonjour_local_suffix",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "Test-MacBook.local",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "test-macbook",
+		},
+		{
+			name: "macos_computer_name_with_spaces",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "Test's MacBook Pro",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "tests-macbook-pro",
+		},
+		{
+			name: "macos_computer_name_with_spaces_and_parentheses",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "Test's MacBook Pro (4)",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "tests-macbook-pro-4",
 		},
 	}
 
@@ -1171,7 +1190,7 @@ func TestEnsureHostnameWithHostinfo(t *testing.T) {
 			},
 			machineKey:   "mkey12345678",
 			nodeKey:      "nkey12345678",
-			wantHostname: "invalid-",
+			wantHostname: "test-node-with-very-long-hostname-that-exceeds-dns-label-limits",
 		},
 		{
 			name:         "nil_hostinfo_node_key_only",
