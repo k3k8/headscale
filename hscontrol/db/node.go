@@ -427,6 +427,14 @@ func RegisterNodeForTest(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *n
 	node.IPv4 = ipv4
 	node.IPv6 = ipv6
 
+	// Load user if not present
+	if node.User == nil && node.UserID != nil {
+		var user types.User
+		if err := tx.First(&user, *node.UserID).Error; err == nil {
+			node.User = &user
+		}
+	}
+
 	var err error
 
 	node.Hostname, err = util.NormaliseHostname(node.Hostname)
@@ -437,7 +445,11 @@ func RegisterNodeForTest(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *n
 	}
 
 	if node.GivenName == "" {
-		givenName, err := EnsureUniqueGivenName(tx, node.Hostname)
+		var username string
+		if node.User != nil {
+			username = node.User.Username()
+		}
+		givenName, err := EnsureUniqueGivenName(tx, node.Hostname, username)
 		if err != nil {
 			return nil, fmt.Errorf("ensuring unique given name: %w", err)
 		}
@@ -527,6 +539,7 @@ func isUniqueName(tx *gorm.DB, name string) (bool, error) {
 func EnsureUniqueGivenName(
 	tx *gorm.DB,
 	name string,
+	username string,
 ) (string, error) {
 	givenName, err := generateGivenName(name, false)
 	if err != nil {
@@ -538,16 +551,50 @@ func EnsureUniqueGivenName(
 		return "", err
 	}
 
-	if !unique {
-		postfixedName, err := generateGivenName(name, true)
+	if unique {
+		return givenName, nil
+	}
+
+	// If name is not unique, try adding username
+	prefix := givenName
+	if username != "" {
+		safeUser, err := util.NormaliseHostname(username)
+		if err == nil {
+			candidate := fmt.Sprintf("%s-%s", givenName, safeUser)
+			if len(candidate) > util.LabelHostnameLength {
+				candidate = candidate[:util.LabelHostnameLength]
+			}
+			unique, err := isUniqueName(tx, candidate)
+			if err != nil {
+				return "", err
+			}
+			if unique {
+				return candidate, nil
+			}
+			prefix = candidate
+		}
+	}
+
+	// Still not unique, try adding sequential numbers
+	for i := 1; i < 100; i++ {
+		suffix := fmt.Sprintf("-%d", i)
+		candidate := prefix
+		if len(candidate)+len(suffix) > util.LabelHostnameLength {
+			candidate = candidate[:util.LabelHostnameLength-len(suffix)]
+		}
+		candidate += suffix
+
+		unique, err := isUniqueName(tx, candidate)
 		if err != nil {
 			return "", err
 		}
-
-		givenName = postfixedName
+		if unique {
+			return candidate, nil
+		}
 	}
 
-	return givenName, nil
+	// If we still haven't found a unique name, fall back to random suffix
+	return generateGivenName(name, true)
 }
 
 // EphemeralGarbageCollector is a garbage collector that will delete nodes after
