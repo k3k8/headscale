@@ -1130,6 +1130,34 @@ func TestEnsureHostname(t *testing.T) {
 			nodeKey:    "nkey12345678",
 			want:       "tests-macbook-pro",
 		},
+		// New tests for macOS / macOS-like hostnames
+		{
+			name: "macos_bonjour_local_suffix",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "Test-MacBook.local",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "test-macbook",
+		},
+		{
+			name: "macos_computer_name_with_spaces",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "Test's MacBook Pro",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "tests-macbook-pro",
+		},
+		{
+			name: "macos_computer_name_with_spaces_and_parentheses",
+			hostinfo: &tailcfg.Hostinfo{
+				Hostname: "Test's MacBook Pro (4)",
+			},
+			machineKey: "mkey12345678",
+			nodeKey:    "nkey12345678",
+			want:       "tests-macbook-pro-4",
+		},
 	}
 
 	for _, tt := range tests {
