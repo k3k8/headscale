@@ -322,11 +322,30 @@ func EnsureHostname(hostinfo tailcfg.HostinfoView, machineKey, nodeKey string) s
 		}
 	}
 
-	lowercased := strings.ToLower(hostinfo.Hostname())
+	hostname := hostinfo.Hostname()
 
-	err := ValidateHostname(lowercased)
-	if err == nil {
-		return lowercased
+	// macOS and some Bonjour services append .local, which we should strip
+	hostname = strings.TrimSuffix(hostname, ".local")
+
+	// Replace spaces with hyphens to preserve word separation
+	// e.g. "Kota's MacBook Pro (4)" -> "Kota's-MacBook-Pro-(4)"
+	hostname = strings.ReplaceAll(hostname, " ", "-")
+	
+	// Convert to lowercase and strip invalid characters
+	hostname = strings.ToLower(hostname)
+	hostname = invalidDNSRegex.ReplaceAllString(hostname, "")
+
+	// Trimming may be necessary if stripping invalid characters left trailing/leading hyphens
+	hostname = strings.Trim(hostname, "-")
+
+	// Truncate to DNS label limit
+	if len(hostname) > LabelHostnameLength {
+		hostname = hostname[:LabelHostnameLength]
+		hostname = strings.Trim(hostname, "-") // Truncation might create new trailing hyphens
+	}
+
+	if err := ValidateHostname(hostname); err == nil {
+		return hostname
 	}
 
 	return InvalidString()
