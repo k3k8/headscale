@@ -833,11 +833,11 @@ func TestNodeNaming(t *testing.T) {
 	assert.Equal(t, nodes[0].Hostname, nodes[1].Hostname)
 	assert.NotEqual(t, nodes[0].Hostname, nodes[1].GivenName)
 	assert.Contains(t, nodes[1].GivenName, nodes[0].Hostname)
-	assert.Equal(t, nodes[0].GivenName, nodes[1].Hostname)
+	assert.Contains(t, nodes[1].GivenName, "user2")
 	assert.Len(t, nodes[0].Hostname, 4)
 	assert.Len(t, nodes[1].Hostname, 4)
 	assert.Len(t, nodes[0].GivenName, 4)
-	assert.Len(t, nodes[1].GivenName, 13)
+	assert.Equal(t, "test-user2", nodes[1].GivenName)
 	assert.Contains(t, nodes[2].Hostname, "invalid-") // invalid chars
 	assert.Contains(t, nodes[2].GivenName, "invalid-")
 	assert.Contains(t, nodes[3].Hostname, "invalid-") // too short

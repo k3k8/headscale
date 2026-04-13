@@ -1622,7 +1622,11 @@ func (s *State) createAndSaveNewNode(params newNodeParams) (types.NodeView, erro
 
 	// Ensure unique given name if not set
 	if nodeToRegister.GivenName == "" {
-		givenName, err := hsdb.EnsureUniqueGivenName(s.db.DB, nodeToRegister.Hostname)
+		var username string
+		if nodeToRegister.User != nil {
+			username = nodeToRegister.User.Username()
+		}
+		givenName, err := hsdb.EnsureUniqueGivenName(s.db.DB, nodeToRegister.Hostname, username)
 		if err != nil {
 			return types.NodeView{}, fmt.Errorf("ensuring unique given name: %w", err)
 		}
