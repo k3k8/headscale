@@ -246,12 +246,6 @@ func (pol *Policy) destinationsToNetPortRange(
 			continue
 		}
 
-		// autogroup:internet does not generate packet filters - it's handled
-		// by exit node routing via AllowedIPs, not by packet filtering.
-		if ag, isAutoGroup := dest.(*AutoGroup); isAutoGroup && ag.Is(AutoGroupInternet) {
-			continue
-		}
-
 		ips, err := dest.Resolve(pol, users, nodes)
 		if err != nil {
 			log.Trace().Caller().Err(err).Msgf("resolving destination ips")
@@ -363,11 +357,9 @@ func (pol *Policy) compileViaGrant(
 				viaDstPrefixes = append(viaDstPrefixes, dstPrefix)
 			}
 		case *AutoGroup:
-			// autogroup:internet via grants do NOT produce PacketFilter rules
-			// on the exit node. Tailscale SaaS handles exit traffic forwarding
-			// through the client's exit node selection mechanism (AllowedIPs +
-			// ExitNodeOption), not through PacketFilter rules. Verified by
-			// golden captures GRANT-V14 through GRANT-V36.
+			if d.Is(AutoGroupInternet) && len(nodeExitRoutes) > 0 {
+				viaDstPrefixes = append(viaDstPrefixes, util.TheInternet().Prefixes()...)
+			}
 		}
 	}
 
