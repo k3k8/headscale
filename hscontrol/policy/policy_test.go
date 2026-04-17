@@ -893,11 +893,13 @@ func TestReduceNodesFromPolicy(t *testing.T) {
   ]
 }`,
 			node: n(1, "100.64.0.1", "mobile", "mobile"),
-			// autogroup:internet does not generate packet filters - it's handled
-			// by exit node routing via AllowedIPs, not by packet filtering.
-			// Only server is visible through the mobile -> server:80 rule.
+			// autogroup:internet generates TheInternet filter rules, making exit
+			// nodes visible as peers and allowing traffic through them.
+			// The two rules (server:80 + internet) are merged into one by
+			// mergeFilterRules (same SrcIPs), so wantMatchers=1.
 			want: types.Nodes{
 				n(2, "100.64.0.2", "server", "server"),
+				n(3, "100.64.0.3", "exit", "server", "0.0.0.0/0", "::/0"),
 			},
 			wantMatchers: 1,
 		},
