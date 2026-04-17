@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
 	"go4.org/netipx"
 	"tailscale.com/tailcfg"
@@ -673,7 +674,9 @@ func compileViaForNode(
 
 	// Find matching destination prefixes.
 	nodeSubnetRoutes := node.SubnetRoutes()
-	if len(nodeSubnetRoutes) == 0 {
+	nodeExitRoutes := node.ExitRoutes()
+
+	if len(nodeSubnetRoutes) == 0 && len(nodeExitRoutes) == 0 {
 		return nil
 	}
 
@@ -689,8 +692,12 @@ func compileViaForNode(
 				)
 			}
 		case *AutoGroup:
-			// autogroup:internet via grants do not produce
-			// PacketFilter rules on exit nodes.
+			if d.Is(AutoGroupInternet) && len(nodeExitRoutes) > 0 {
+				viaDstPrefixes = append(
+					viaDstPrefixes,
+					util.TheInternet().Prefixes()...,
+				)
+			}
 		}
 	}
 
