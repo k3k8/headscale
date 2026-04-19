@@ -51,11 +51,21 @@ func ReduceFilterRules(node types.NodeView, rules []tailcfg.FilterRule) []tailcf
 			// returns only approved, non-exit routes — matching
 			// Tailscale SaaS behavior, which does not generate
 			// filter rules for advertised-but-unapproved routes.
-			// Exit routes (0.0.0.0/0, ::/0) are excluded by
-			// SubnetRoutes() and handled separately via
-			// AllowedIPs/routing.
 			if slices.ContainsFunc(subnetRoutes, expanded.OverlapsPrefix) {
 				dests = append(dests, dest)
+				continue
+			}
+
+			// For exit nodes: include destinations overlapping any
+			// TheInternet prefix (headscale uses packet filter for
+			// exit node access, not peer capabilities).
+			if node.IsExitNode() {
+				for _, internetPrefix := range util.TheInternet().Prefixes() {
+					if expanded.OverlapsPrefix(internetPrefix) {
+						dests = append(dests, dest)
+						break
+					}
+				}
 			}
 		}
 
