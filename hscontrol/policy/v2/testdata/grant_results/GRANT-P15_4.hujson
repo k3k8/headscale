@@ -135,7 +135,27 @@
   },
   "captures": {
     "exit-node": {
-      "packet_filter_rules": null
+      "packet_filter_rules": [
+      {
+            "SrcIPs": [
+                  "100.90.199.68",
+                  "100.103.90.82",
+                  "100.110.121.96",
+                  "fd7a:115c:a1e0::1737:7960",
+                  "fd7a:115c:a1e0::2d01:c747",
+                  "fd7a:115c:a1e0::9e37:5a52"
+            ],
+            "DstPorts": [
+                  {
+                        "IP": "8.8.8.0/24",
+                        "Ports": {
+                              "First": 53,
+                              "Last": 53
+                        }
+                  }
+            ]
+      }
+]
     },
     "subnet-router": {
       "packet_filter_rules": null

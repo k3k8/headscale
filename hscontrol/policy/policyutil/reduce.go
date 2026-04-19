@@ -56,13 +56,24 @@ func ReduceFilterRules(node types.NodeView, rules []tailcfg.FilterRule) []tailcf
 			if node.Hostinfo().Valid() {
 				routableIPs := node.Hostinfo().RoutableIPs()
 				if routableIPs.Len() > 0 {
+					var hasExitRoute bool
 					for _, routableIP := range routableIPs.All() {
 						if tsaddr.IsExitRoute(routableIP) {
+							hasExitRoute = true
 							continue
 						}
 						if expanded.OverlapsPrefix(routableIP) {
 							dests = append(dests, dest)
 							continue DEST_LOOP
+						}
+					}
+					// autogroup:internet: exit nodes need DstPort rules since headscale uses packet filter, not peer capabilities.
+					if hasExitRoute {
+						for _, internetPrefix := range util.TheInternet().Prefixes() {
+							if expanded.OverlapsPrefix(internetPrefix) {
+								dests = append(dests, dest)
+								continue DEST_LOOP
+							}
 						}
 					}
 				}
@@ -136,6 +147,7 @@ func reduceCapGrantRule(
 				for _, dst := range cg.Dsts {
 					for _, routableIP := range routableIPs.All() {
 						if tsaddr.IsExitRoute(routableIP) {
+							// CapGrant for internet destinations targets client nodes, not the exit node itself.
 							continue
 						}
 

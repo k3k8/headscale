@@ -4,7 +4,7 @@
 //
 // Routers: 6 nodes with routes
 //
-// Expected: No filter rules
+// Expected: filter rules on exit node (headscale diverges from Tailscale SaaS)
 {
   "test_id": "ROUTES-h6_loopback_routes_not_distributed",
   "input": {
@@ -218,7 +218,22 @@
       "packet_filter_rules": null
     },
     "exit-node": {
-      "packet_filter_rules": null
+      "packet_filter_rules": [
+        {
+          "SrcIPs": [
+            "100.64.0.0-100.115.91.255",
+            "100.115.94.0-100.127.255.255",
+            "fd7a:115c:a1e0::/48",
+            "192.168.1.0/24",
+            "10.33.0.0/16",
+            "172.16.0.0/24",
+            "10.0.0.0/8"
+          ],
+          "DstPorts": [
+            {"IP": "127.0.0.1", "Ports": {"First": 0, "Last": 65535}}
+          ]
+        }
+      ]
     },
     "ha-router1": {
       "packet_filter_rules": null
