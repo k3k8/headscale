@@ -1119,6 +1119,10 @@ func (s *State) RoutesForPeer(
 	globalPrimaries := s.primaryRoutes.PrimaryRoutes(peer.ID())
 	exitRoutes := peer.ExitRoutes()
 
+	if !s.polMan.ExitNodeAuthorizedForViewer(viewer, peer) {
+		exitRoutes = nil
+	}
+
 	// Fast path: no via grants affect this pair — existing behavior.
 	if len(viaResult.Include) == 0 && len(viaResult.Exclude) == 0 {
 		allRoutes := slices.Concat(globalPrimaries, exitRoutes)
