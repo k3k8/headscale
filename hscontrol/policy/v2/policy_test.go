@@ -1792,3 +1792,112 @@ func TestViaRoutesForPeer(t *testing.T) {
 				"state.RoutesForPeer adds via routes after ReduceRoutes to fix this")
 	})
 }
+
+func TestExitNodeAuthorizedForViewer(t *testing.T) {
+	t.Parallel()
+
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "user1", Email: "user1@"},
+		{Model: gorm.Model{ID: 2}, Name: "user2", Email: "user2@"},
+	}
+
+	viewer := &types.Node{
+		ID:       1,
+		Hostname: "viewer",
+		IPv4:     ap("100.64.0.1"),
+		User:     new(users[0]),
+		UserID:   new(users[0].ID),
+		Hostinfo: &tailcfg.Hostinfo{},
+	}
+
+	exitNode := &types.Node{
+		ID:       2,
+		Hostname: "exit-node",
+		IPv4:     ap("100.64.0.2"),
+		User:     new(users[1]),
+		UserID:   new(users[1].ID),
+		Tags:     []string{"tag:exit"},
+		Hostinfo: &tailcfg.Hostinfo{
+			RoutableIPs: []netip.Prefix{mp("0.0.0.0/0"), mp("::/0")},
+		},
+		ApprovedRoutes: []netip.Prefix{mp("0.0.0.0/0"), mp("::/0")},
+	}
+
+	nodes := types.Nodes{viewer, exitNode}
+
+	t.Run("nil_policy_manager_returns_true", func(t *testing.T) {
+		t.Parallel()
+		var pm *PolicyManager
+		require.True(t, pm.ExitNodeAuthorizedForViewer(viewer.View(), exitNode.View()))
+	})
+
+	t.Run("no_internet_grant_returns_true", func(t *testing.T) {
+		t.Parallel()
+		pol := `{"acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}]}`
+		pm, err := NewPolicyManager([]byte(pol), users, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.True(t, pm.ExitNodeAuthorizedForViewer(viewer.View(), exitNode.View()))
+	})
+
+	t.Run("wildcard_src_internet_dst_returns_true", func(t *testing.T) {
+		t.Parallel()
+		pol := `{"acls": [{"action": "accept", "src": ["*"], "dst": ["autogroup:internet:*"]}]}`
+		pm, err := NewPolicyManager([]byte(pol), users, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.True(t, pm.ExitNodeAuthorizedForViewer(viewer.View(), exitNode.View()))
+	})
+
+	t.Run("tagged_src_viewer_matches_returns_true", func(t *testing.T) {
+		t.Parallel()
+		taggedViewer := &types.Node{
+			ID:       3,
+			Hostname: "tagged-viewer",
+			IPv4:     ap("100.64.0.3"),
+			Tags:     []string{"tag:group"},
+			Hostinfo: &tailcfg.Hostinfo{},
+		}
+		pol := `{
+			"tagOwners": {"tag:group": ["user1@"], "tag:exit": ["user2@"]},
+			"acls": [{"action": "accept", "src": ["tag:group"], "dst": ["autogroup:internet:*"]}]
+		}`
+		allNodes := types.Nodes{viewer, exitNode, taggedViewer}
+		pm, err := NewPolicyManager([]byte(pol), users, allNodes.ViewSlice())
+		require.NoError(t, err)
+		require.True(t, pm.ExitNodeAuthorizedForViewer(taggedViewer.View(), exitNode.View()))
+	})
+
+	t.Run("tagged_src_viewer_not_in_group_returns_false", func(t *testing.T) {
+		t.Parallel()
+		pol := `{
+			"tagOwners": {"tag:group": ["user1@"], "tag:exit": ["user2@"]},
+			"acls": [{"action": "accept", "src": ["tag:group"], "dst": ["autogroup:internet:*"]}]
+		}`
+		pm, err := NewPolicyManager([]byte(pol), users, nodes.ViewSlice())
+		require.NoError(t, err)
+		// viewer (user-owned, not tagged) does not match tag:group.
+		require.False(t, pm.ExitNodeAuthorizedForViewer(viewer.View(), exitNode.View()))
+	})
+
+	t.Run("via_grant_peer_has_tag_returns_true", func(t *testing.T) {
+		t.Parallel()
+		pol := `{
+			"tagOwners": {"tag:exit": ["user2@"]},
+			"grants": [{"src": ["user1@"], "dst": ["autogroup:internet"], "ip": ["*"], "via": ["tag:exit"]}]
+		}`
+		pm, err := NewPolicyManager([]byte(pol), users, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.True(t, pm.ExitNodeAuthorizedForViewer(viewer.View(), exitNode.View()))
+	})
+
+	t.Run("via_grant_peer_lacks_tag_returns_false", func(t *testing.T) {
+		t.Parallel()
+		pol := `{
+			"tagOwners": {"tag:exit-a": ["user2@"], "tag:exit": ["user2@"]},
+			"grants": [{"src": ["user1@"], "dst": ["autogroup:internet"], "ip": ["*"], "via": ["tag:exit-a"]}]
+		}`
+		// exitNode has tag:exit, but grant requires tag:exit-a.
+		pm, err := NewPolicyManager([]byte(pol), users, nodes.ViewSlice())
+		require.NoError(t, err)
+		require.False(t, pm.ExitNodeAuthorizedForViewer(viewer.View(), exitNode.View()))
+	})
+}

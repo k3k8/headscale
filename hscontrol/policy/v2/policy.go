@@ -1042,6 +1042,81 @@ func (pm *PolicyManager) ViaRoutesForPeer(viewer, peer types.NodeView) types.Via
 	return result
 }
 
+// ExitNodeAuthorizedForViewer reports whether viewer is allowed to use peer as
+// an exit node. Returns true when the policy has no autogroup:internet
+// references (no restriction), or when a matching grant authorizes the viewer.
+func (pm *PolicyManager) ExitNodeAuthorizedForViewer(viewer, peer types.NodeView) bool {
+	if pm == nil || pm.pol == nil {
+		return true
+	}
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	grants := pm.pol.Grants
+	for _, acl := range pm.pol.ACLs {
+		grants = append(grants, aclToGrants(acl)...)
+	}
+
+	// If no grant references autogroup:internet, there is no restriction.
+	hasInternetGrant := false
+	for _, grant := range grants {
+		for _, dst := range grant.Destinations {
+			if ag, ok := dst.(*AutoGroup); ok && ag.Is(AutoGroupInternet) {
+				hasInternetGrant = true
+				break
+			}
+		}
+		if hasInternetGrant {
+			break
+		}
+	}
+	if !hasInternetGrant {
+		return true
+	}
+
+	for _, grant := range grants {
+		internetDst := false
+		for _, dst := range grant.Destinations {
+			if ag, ok := dst.(*AutoGroup); ok && ag.Is(AutoGroupInternet) {
+				internetDst = true
+				break
+			}
+		}
+		if !internetDst {
+			continue
+		}
+
+		viewerMatches := false
+		for _, src := range grant.Sources {
+			ips, err := src.Resolve(pm.pol, pm.users, pm.nodes)
+			if err != nil {
+				continue
+			}
+			if ips != nil && slices.ContainsFunc(viewer.IPs(), ips.Contains) {
+				viewerMatches = true
+				break
+			}
+		}
+		if !viewerMatches {
+			continue
+		}
+
+		if len(grant.Via) > 0 {
+			for _, viaTag := range grant.Via {
+				if peer.HasTag(string(viaTag)) {
+					return true
+				}
+			}
+			continue
+		}
+
+		return true
+	}
+
+	return false
+}
+
 func (pm *PolicyManager) Version() int {
 	return 2
 }

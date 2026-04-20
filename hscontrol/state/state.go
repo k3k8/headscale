@@ -1188,6 +1188,10 @@ func (s *State) RoutesForPeer(
 	globalPrimaries := s.primaryRoutes.PrimaryRoutes(peer.ID())
 	exitRoutes := peer.ExitRoutes()
 
+	if !s.polMan.ExitNodeAuthorizedForViewer(viewer, peer) {
+		exitRoutes = nil
+	}
+
 	var reduced []netip.Prefix
 
 	// Fast path: no via grants affect this pair.
