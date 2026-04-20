@@ -42,6 +42,11 @@ type PolicyManager interface {
 	// both fields are empty and the caller falls back to existing behavior.
 	ViaRoutesForPeer(viewer, peer types.NodeView) types.ViaRouteResult
 
+	// ExitNodeAuthorizedForViewer reports whether viewer is allowed to use peer as
+	// an exit node. Returns true when the policy has no autogroup:internet grants
+	// (no restriction), or when a matching grant authorizes the viewer.
+	ExitNodeAuthorizedForViewer(viewer, peer types.NodeView) bool
+
 	Version() int
 	DebugString() string
 }
