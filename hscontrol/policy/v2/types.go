@@ -3051,3 +3051,76 @@ func validateProtocolPortCompatibility(protocol Protocol, destinations []AliasWi
 
 	return nil
 }
+
+// usesAutogroupSelf checks if the policy uses autogroup:self in any ACL, Grant or SSH rules.
+func (p *Policy) usesAutogroupSelf() bool {
+	if p == nil {
+		return false
+	}
+
+	// Check ACL rules
+	for _, acl := range p.ACLs {
+		for _, src := range acl.Sources {
+			if ag, ok := src.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+
+		for _, dest := range acl.Destinations {
+			if ag, ok := dest.Alias.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+	}
+
+	// Check Grant rules
+	for _, grant := range p.Grants {
+		for _, src := range grant.Sources {
+			if ag, ok := src.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+
+		for _, dest := range grant.Destinations {
+			if ag, ok := dest.(*AutoGroup); ok && ag.Is(AutoGroupInternet) {
+				continue
+			}
+			if ag, ok := dest.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+	}
+
+	// Check SSH rules
+	for _, ssh := range p.SSHs {
+		for _, src := range ssh.Sources {
+			if ag, ok := src.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+
+		for _, dest := range ssh.Destinations {
+			if ag, ok := dest.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// hasViaGrants returns true if any grant in the policy has a
+// non-empty Via field, requiring per-node filter compilation.
+func (p *Policy) hasViaGrants() bool {
+	if p == nil {
+		return false
+	}
+
+	for _, grant := range p.Grants {
+		if len(grant.Via) > 0 {
+			return true
+		}
+	}
+
+	return false
+}
