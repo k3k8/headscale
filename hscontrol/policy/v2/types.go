@@ -3041,7 +3041,7 @@ func validateProtocolPortCompatibility(protocol Protocol, destinations []AliasWi
 	return nil
 }
 
-// usesAutogroupSelf checks if the policy uses autogroup:self in any ACL or SSH rules.
+// usesAutogroupSelf checks if the policy uses autogroup:self in any ACL, Grant or SSH rules.
 func (p *Policy) usesAutogroupSelf() bool {
 	if p == nil {
 		return false
@@ -3057,6 +3057,24 @@ func (p *Policy) usesAutogroupSelf() bool {
 
 		for _, dest := range acl.Destinations {
 			if ag, ok := dest.Alias.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+	}
+
+	// Check Grant rules
+	for _, grant := range p.Grants {
+		for _, src := range grant.Sources {
+			if ag, ok := src.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
+				return true
+			}
+		}
+
+		for _, dest := range grant.Destinations {
+			if ag, ok := dest.(*AutoGroup); ok && ag.Is(AutoGroupInternet) {
+				continue
+			}
+			if ag, ok := dest.(*AutoGroup); ok && ag.Is(AutoGroupSelf) {
 				return true
 			}
 		}
