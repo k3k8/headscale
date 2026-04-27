@@ -337,6 +337,7 @@ func TestReduceFilterRules(t *testing.T) {
 				Hostinfo: &tailcfg.Hostinfo{
 					RoutableIPs: tsaddr.ExitRoutes(),
 				},
+				ApprovedRoutes: tsaddr.ExitRoutes(),
 			},
 			peers: types.Nodes{
 				&types.Node{
@@ -487,6 +488,7 @@ func TestReduceFilterRules(t *testing.T) {
 				Hostinfo: &tailcfg.Hostinfo{
 					RoutableIPs: tsaddr.ExitRoutes(),
 				},
+				ApprovedRoutes: tsaddr.ExitRoutes(),
 			},
 			peers: types.Nodes{
 				&types.Node{

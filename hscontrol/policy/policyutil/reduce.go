@@ -158,3 +158,4 @@ func reduceCapGrantRule(
 		CapGrant: capGrants,
 	}
 }
+
