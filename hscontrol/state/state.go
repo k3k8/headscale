@@ -2570,9 +2570,16 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 				// iOS clients send "localhost" on every MapRequest. Resolve via
 				// DeviceModel so we don't clobber the meaningful name set at
 				// registration time (e.g. "iphone-15-pro").
-				if strings.ToLower(hostname) == "localhost" && req.Hostinfo.DeviceModel != "" {
-					if resolved := util.HostnameFromDeviceModel(req.Hostinfo.DeviceModel); resolved != "" {
-						hostname = resolved
+				if strings.ToLower(hostname) == "localhost" {
+					if req.Hostinfo.DeviceModel != "" {
+						if resolved := util.HostnameFromDeviceModel(req.Hostinfo.DeviceModel); resolved != "" {
+							hostname = resolved
+						}
+					}
+					// Still "localhost" (DeviceModel absent or lookup failed) →
+					// preserve whatever name was set at registration time.
+					if strings.ToLower(hostname) == "localhost" {
+						hostname = currentNode.Hostname
 					}
 				}
 
