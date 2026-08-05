@@ -379,7 +379,7 @@ func TestParsing(t *testing.T) {
 						User:     &users[0],
 						Hostinfo: &tailcfg.Hostinfo{},
 					},
-				}.ViewSlice())
+				}.ViewSlice(), false)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parsing() error = %v, wantErr %v", err, tt.wantErr)
@@ -1340,7 +1340,7 @@ func TestCompileFilterRulesForNodeWithAutogroupSelf(t *testing.T) {
 	// Test compilation for user1's first node
 	node1 := nodes[0].View()
 
-	rules, err := policy2.compileFilterRulesForNode(users, node1, nodes.ViewSlice())
+	rules, err := policy2.compileFilterRulesForNode(users, node1, nodes.ViewSlice(), false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1501,7 +1501,7 @@ func TestTagUserMutualExclusivity(t *testing.T) {
 	// matching the production pipeline in filterForNodeLocked.
 	userNode := nodes[0].View()
 
-	compiled, err := pol.compileFilterRulesForNode(users, userNode, nodes.ViewSlice())
+	compiled, err := pol.compileFilterRulesForNode(users, userNode, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 
 	userRules := policyutil.ReduceFilterRules(userNode, compiled)
@@ -1524,7 +1524,7 @@ func TestTagUserMutualExclusivity(t *testing.T) {
 	// Tag:database should receive the tag:server → tag:database rule after reduction.
 	dbNode := nodes[3].View()
 
-	compiled, err = pol.compileFilterRulesForNode(users, dbNode, nodes.ViewSlice())
+	compiled, err = pol.compileFilterRulesForNode(users, dbNode, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 
 	dbRules := policyutil.ReduceFilterRules(dbNode, compiled)
@@ -1596,7 +1596,7 @@ func TestUserToTagCrossIdentityGrant(t *testing.T) {
 	// user1's IP as source.
 	taggedNode := nodes[2].View()
 
-	compiled, err := pol.compileFilterRulesForNode(users, taggedNode, nodes.ViewSlice())
+	compiled, err := pol.compileFilterRulesForNode(users, taggedNode, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 
 	rules := policyutil.ReduceFilterRules(taggedNode, compiled)
@@ -1735,7 +1735,7 @@ func TestAutogroupTagged(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rules, err := policy.compileFilterRulesForNode(users, tt.sourceNode, nodes.ViewSlice())
+			rules, err := policy.compileFilterRulesForNode(users, tt.sourceNode, nodes.ViewSlice(), false)
 			require.NoError(t, err)
 
 			// Verify all expected destinations are reachable
@@ -1819,7 +1819,7 @@ func TestAutogroupSelfWithSpecificUserSource(t *testing.T) {
 
 	// For user1's node: sources should be user1's devices
 	node1 := nodes[0].View()
-	rules, err := policy.compileFilterRulesForNode(users, node1, nodes.ViewSlice())
+	rules, err := policy.compileFilterRulesForNode(users, node1, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 	require.Len(t, rules, 1)
 
@@ -1850,7 +1850,7 @@ func TestAutogroupSelfWithSpecificUserSource(t *testing.T) {
 	assert.ElementsMatch(t, expectedDestIPs, actualDestIPs)
 
 	node2 := nodes[2].View()
-	rules2, err := policy.compileFilterRulesForNode(users, node2, nodes.ViewSlice())
+	rules2, err := policy.compileFilterRulesForNode(users, node2, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 	assert.Empty(t, rules2, "user2's node should have no rules (user1@ devices can't match user2's self)")
 }
@@ -1893,7 +1893,7 @@ func TestAutogroupSelfWithGroupSource(t *testing.T) {
 
 	// (group:admins has user1+user2, but autogroup:self filters to same user)
 	node1 := nodes[0].View()
-	rules, err := policy.compileFilterRulesForNode(users, node1, nodes.ViewSlice())
+	rules, err := policy.compileFilterRulesForNode(users, node1, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 	require.Len(t, rules, 1)
 
@@ -1916,7 +1916,7 @@ func TestAutogroupSelfWithGroupSource(t *testing.T) {
 	}
 
 	node3 := nodes[4].View()
-	rules3, err := policy.compileFilterRulesForNode(users, node3, nodes.ViewSlice())
+	rules3, err := policy.compileFilterRulesForNode(users, node3, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 	assert.Empty(t, rules3, "user3 should have no rules")
 }
@@ -2366,7 +2366,7 @@ func TestAutogroupSelfWithNonExistentUserInGroup(t *testing.T) {
 	// Test superadmin's device: should have rules with tag:common, tag:tech, tag:privileged destinations
 	// and superadmin's IP should appear in sources (partial resolution of group:superadmin works)
 	superadminNode := nodes[0].View()
-	superadminRules, err := policy.compileFilterRulesForNode(users, superadminNode, nodes.ViewSlice())
+	superadminRules, err := policy.compileFilterRulesForNode(users, superadminNode, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 	assert.True(t, containsIP(superadminRules, "100.64.0.10"), "rules should include tag:common server")
 	assert.True(t, containsIP(superadminRules, "100.64.0.11"), "rules should include tag:tech server")
@@ -2383,7 +2383,7 @@ func TestAutogroupSelfWithNonExistentUserInGroup(t *testing.T) {
 	// partial result to be discarded via `continue`. With the fix, superadmin's IPs
 	// from group:superadmin are retained alongside admin's IPs from group:admin.
 	adminNode := nodes[1].View()
-	adminRules, err := policy.compileFilterRulesForNode(users, adminNode, nodes.ViewSlice())
+	adminRules, err := policy.compileFilterRulesForNode(users, adminNode, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 
 	// Rule 1 sources: [group:superadmin, group:admin, group:direction]
@@ -2398,7 +2398,7 @@ func TestAutogroupSelfWithNonExistentUserInGroup(t *testing.T) {
 
 	// Test direction's device: similar to admin, verifies group:direction sources work
 	directionNode := nodes[2].View()
-	directionRules, err := policy.compileFilterRulesForNode(users, directionNode, nodes.ViewSlice())
+	directionRules, err := policy.compileFilterRulesForNode(users, directionNode, nodes.ViewSlice(), false)
 	require.NoError(t, err)
 	assert.True(t, containsIP(directionRules, "100.64.0.10"),
 		"direction rules should include tag:common server")
@@ -3579,7 +3579,7 @@ func TestFilterAllowAllFix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rules, err := tt.pol.compileFilterRules(users, nodes)
+			rules, err := tt.pol.compileFilterRules(users, nodes, false)
 			require.NoError(t, err)
 
 			isFilterAllowAll := cmp.Diff(tailcfg.FilterAllowAll, rules) == ""
@@ -3832,7 +3832,7 @@ func TestCompileViaGrant(t *testing.T) {
 			nodeView := tt.node.View()
 			nodesSlice := tt.nodes.ViewSlice()
 
-			got, err := tt.pol.compileViaGrant(tt.grant, users, nodeView, nodesSlice)
+			got, err := tt.pol.compileViaGrant(tt.grant, users, nodeView, nodesSlice, false)
 
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
@@ -3999,7 +3999,7 @@ func TestCompileGrantWithAutogroupSelf_GrantPaths(t *testing.T) {
 			nodesSlice := allNodes.ViewSlice()
 
 			got, err := tt.pol.compileGrantWithAutogroupSelf(
-				tt.grant, users, nodeView, nodesSlice,
+				tt.grant, users, nodeView, nodesSlice, false,
 			)
 
 			if tt.wantErr != nil {
@@ -4102,7 +4102,7 @@ func TestDestinationsToNetPortRange_AutogroupInternet(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := pol.destinationsToNetPortRange(users, nodes, tt.dests, ports)
+			got := pol.destinationsToNetPortRange(users, nodes, tt.dests, ports, false)
 			assert.Len(t, got, tt.wantLen)
 
 			if tt.wantStar && len(got) > 0 {
@@ -4114,4 +4114,172 @@ func TestDestinationsToNetPortRange_AutogroupInternet(t *testing.T) {
 			}
 		})
 	}
+}
+
+// autogroupInternetPolicy is a minimal policy whose only destination is
+// autogroup:internet. It exercises the global (non-per-node) compilation
+// path, since it uses neither autogroup:self nor via grants.
+const autogroupInternetPolicy = `
+{
+	"acls": [
+		{
+			"action": "accept",
+			"src": ["*"],
+			"dst": ["autogroup:internet:*"]
+		}
+	]
+}
+`
+
+// containsInternetPrefix reports whether the rules mention a prefix that
+// only autogroup:internet expansion produces. 0.0.0.0/5 is the first
+// prefix util.TheInternet() emits and never appears in a Tailscale-range
+// or private-range destination.
+func containsInternetPrefix(rules []tailcfg.FilterRule) bool {
+	for _, rule := range rules {
+		for _, dp := range rule.DstPorts {
+			if dp.IP == "0.0.0.0/5" {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// TestAutogroupInternetForMatchers asserts the two-consumer split:
+// matcher-facing rules carry the expanded internet prefixes, client-facing
+// rules do not. Both the global and the per-node compilation paths are
+// covered because a policy can reach either depending on whether it also
+// uses autogroup:self or via grants.
+func TestAutogroupInternetForMatchers(t *testing.T) {
+	t.Parallel()
+
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "testuser"},
+	}
+	nodes := types.Nodes{
+		&types.Node{
+			ID:       1,
+			IPv4:     ap("100.64.0.1"),
+			User:     &users[0],
+			Hostinfo: &tailcfg.Hostinfo{},
+		},
+	}
+
+	pol, err := unmarshalPolicy([]byte(autogroupInternetPolicy))
+	require.NoError(t, err)
+
+	t.Run("global_path", func(t *testing.T) {
+		t.Parallel()
+
+		forClient, err := pol.compileFilterRules(users, nodes.ViewSlice(), false)
+		require.NoError(t, err)
+		assert.False(t, containsInternetPrefix(forClient),
+			"client-facing filter must not expand autogroup:internet")
+
+		forMatchers, err := pol.compileFilterRules(users, nodes.ViewSlice(), true)
+		require.NoError(t, err)
+		assert.True(t, containsInternetPrefix(forMatchers),
+			"matcher filter must expand autogroup:internet")
+	})
+
+	t.Run("per_node_path", func(t *testing.T) {
+		t.Parallel()
+
+		forClient, err := pol.compileFilterRulesForNode(users, nodes[0].View(), nodes.ViewSlice(), false)
+		require.NoError(t, err)
+		assert.False(t, containsInternetPrefix(forClient),
+			"client-facing per-node filter must not expand autogroup:internet")
+
+		forMatchers, err := pol.compileFilterRulesForNode(users, nodes[0].View(), nodes.ViewSlice(), true)
+		require.NoError(t, err)
+		assert.True(t, containsInternetPrefix(forMatchers),
+			"matcher per-node filter must expand autogroup:internet")
+	})
+}
+
+// TestAutogroupInternetMatchersReachNode verifies the fix end to end
+// through PolicyManager: MatchersForNode must see the internet prefixes
+// (so peer visibility and route steering work) while FilterForNode, which
+// is what actually reaches the client, must not.
+func TestAutogroupInternetMatchersReachNode(t *testing.T) {
+	t.Parallel()
+
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "testuser"},
+	}
+	nodes := types.Nodes{
+		&types.Node{
+			ID:       1,
+			IPv4:     ap("100.64.0.1"),
+			User:     &users[0],
+			Hostinfo: &tailcfg.Hostinfo{},
+		},
+	}
+
+	pm, err := NewPolicyManager([]byte(autogroupInternetPolicy), users, nodes.ViewSlice())
+	require.NoError(t, err)
+
+	matchers, err := pm.MatchersForNode(nodes[0].View())
+	require.NoError(t, err)
+	assert.NotEmpty(t, matchers,
+		"matchers must be non-empty so the exit node stays visible to peers")
+
+	clientFilter, err := pm.FilterForNode(nodes[0].View())
+	require.NoError(t, err)
+	assert.False(t, containsInternetPrefix(clientFilter),
+		"internet prefixes must not leak into the packet filter sent to the client")
+}
+
+// TestAutogroupInternetMatcherCacheInvalidated guards the matcher cache
+// against going stale: it is a second map alongside compiledFilterRulesMap
+// and must be cleared on every policy change, or nodes keep resolving peer
+// visibility against the previous policy.
+func TestAutogroupInternetMatcherCacheInvalidated(t *testing.T) {
+	t.Parallel()
+
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "testuser"},
+	}
+	nodes := types.Nodes{
+		&types.Node{
+			ID:       1,
+			IPv4:     ap("100.64.0.1"),
+			User:     &users[0],
+			Hostinfo: &tailcfg.Hostinfo{},
+		},
+	}
+
+	// A via grant forces the per-node path, which is the one backed by
+	// the matcher cache.
+	viaPolicy := `
+{
+	"tagOwners": {"tag:router": ["testuser@"]},
+	"grants": [
+		{
+			"src": ["*"],
+			"dst": ["autogroup:internet"],
+			"via": ["tag:router"],
+			"ip": ["*"]
+		}
+	]
+}
+`
+
+	pm, err := NewPolicyManager([]byte(viaPolicy), users, nodes.ViewSlice())
+	require.NoError(t, err)
+
+	// Populate the matcher cache.
+	_, err = pm.MatchersForNode(nodes[0].View())
+	require.NoError(t, err)
+	require.NotEmpty(t, pm.compiledFilterRulesMapMatchers,
+		"precondition: matcher cache should be populated")
+
+	changed, err := pm.SetPolicy([]byte(autogroupInternetPolicy))
+	require.NoError(t, err)
+	require.True(t, changed, "precondition: policy change should be detected")
+
+	assert.Empty(t, pm.compiledFilterRulesMapMatchers,
+		"matcher cache must be cleared when the policy changes")
 }

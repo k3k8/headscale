@@ -48,6 +48,10 @@ type PolicyManager struct {
 
 	// Lazy map of per-node compiled filter rules (unreduced, for autogroup:self)
 	compiledFilterRulesMap map[types.NodeID][]tailcfg.FilterRule
+	// Lazy map of per-node compiled filter rules built for matchers. These
+	// additionally carry autogroup:internet destinations, which are excluded
+	// from the client-facing set. Invalidated alongside compiledFilterRulesMap.
+	compiledFilterRulesMapMatchers map[types.NodeID][]tailcfg.FilterRule
 	// Lazy map of per-node filter rules (reduced, for packet filters)
 	filterRulesMap    map[types.NodeID][]tailcfg.FilterRule
 	usesAutogroupSelf bool
@@ -77,14 +81,15 @@ func NewPolicyManager(b []byte, users []types.User, nodes views.Slice[types.Node
 	}
 
 	pm := PolicyManager{
-		pol:                    policy,
-		users:                  users,
-		nodes:                  nodes,
-		sshPolicyMap:           make(map[types.NodeID]*tailcfg.SSHPolicy, nodes.Len()),
-		compiledFilterRulesMap: make(map[types.NodeID][]tailcfg.FilterRule, nodes.Len()),
-		filterRulesMap:         make(map[types.NodeID][]tailcfg.FilterRule, nodes.Len()),
-		usesAutogroupSelf:      policy.usesAutogroupSelf(),
-		needsPerNodeFilter:     policy.usesAutogroupSelf() || policy.hasViaGrants(),
+		pol:                            policy,
+		users:                          users,
+		nodes:                          nodes,
+		sshPolicyMap:                   make(map[types.NodeID]*tailcfg.SSHPolicy, nodes.Len()),
+		compiledFilterRulesMap:         make(map[types.NodeID][]tailcfg.FilterRule, nodes.Len()),
+		compiledFilterRulesMapMatchers: make(map[types.NodeID][]tailcfg.FilterRule, nodes.Len()),
+		filterRulesMap:                 make(map[types.NodeID][]tailcfg.FilterRule, nodes.Len()),
+		usesAutogroupSelf:              policy.usesAutogroupSelf(),
+		needsPerNodeFilter:             policy.usesAutogroupSelf() || policy.hasViaGrants(),
 	}
 
 	_, err = pm.updateLocked()
@@ -106,8 +111,9 @@ func (pm *PolicyManager) updateLocked() (bool, error) {
 
 	var err error
 
-	// Standard compilation for all policies
-	filter, err = pm.pol.compileFilterRules(pm.users, pm.nodes)
+	// Standard compilation for all policies. This is the client-facing set:
+	// autogroup:internet destinations are deliberately absent.
+	filter, err = pm.pol.compileFilterRules(pm.users, pm.nodes, false)
 	if err != nil {
 		return false, fmt.Errorf("compiling filter rules: %w", err)
 	}
@@ -135,7 +141,16 @@ func (pm *PolicyManager) updateLocked() (bool, error) {
 
 	pm.filterHash = filterHash
 	if filterChanged {
-		pm.matchers = matcher.MatchesFromFilterRules(pm.filter)
+		// Matchers drive peer visibility and route steering, so they are
+		// built from a separate compilation that keeps autogroup:internet
+		// destinations. Without them the exit node and its routes are
+		// hidden from clients. See destinationsToNetPortRange.
+		matcherFilter, err := pm.pol.compileFilterRules(pm.users, pm.nodes, true)
+		if err != nil {
+			return false, fmt.Errorf("compiling matcher filter rules: %w", err)
+		}
+
+		pm.matchers = matcher.MatchesFromFilterRules(matcherFilter)
 	}
 
 	// Order matters, tags might be used in autoapprovers, so we need to ensure
@@ -210,6 +225,7 @@ func (pm *PolicyManager) updateLocked() (bool, error) {
 		// that nodes has been added or removed.
 		clear(pm.sshPolicyMap)
 		clear(pm.compiledFilterRulesMap)
+		clear(pm.compiledFilterRulesMapMatchers)
 		clear(pm.filterRulesMap)
 	}
 
@@ -414,7 +430,7 @@ func (pm *PolicyManager) BuildPeerMap(nodes views.Slice[types.NodeView]) map[typ
 	// but peer relationships require the full bidirectional access rules.
 	nodeMatchers := make(map[types.NodeID][]matcher.Match, nodes.Len())
 	for _, node := range nodes.All() {
-		filter, err := pm.compileFilterRulesForNodeLocked(node)
+		filter, err := pm.compileFilterRulesForNodeLocked(node, true)
 		if err != nil {
 			continue
 		}
@@ -467,24 +483,34 @@ func (pm *PolicyManager) BuildPeerMap(nodes views.Slice[types.NodeView]) map[typ
 // compileFilterRulesForNodeLocked returns the unreduced compiled filter rules for a node
 // when using autogroup:self. This is used by BuildPeerMap to determine peer relationships.
 // For packet filters sent to nodes, use filterForNodeLocked which returns reduced rules.
-func (pm *PolicyManager) compileFilterRulesForNodeLocked(node types.NodeView) ([]tailcfg.FilterRule, error) {
+func (pm *PolicyManager) compileFilterRulesForNodeLocked(node types.NodeView, forMatchers bool) ([]tailcfg.FilterRule, error) {
 	if pm == nil {
 		return nil, nil
 	}
 
 	// Check if we have cached compiled rules
-	if rules, ok := pm.compiledFilterRulesMap[node.ID()]; ok {
-		return rules, nil
+	if forMatchers {
+		if rules, ok := pm.compiledFilterRulesMapMatchers[node.ID()]; ok {
+			return rules, nil
+		}
+	} else {
+		if rules, ok := pm.compiledFilterRulesMap[node.ID()]; ok {
+			return rules, nil
+		}
 	}
 
 	// Compile per-node rules with autogroup:self expanded
-	rules, err := pm.pol.compileFilterRulesForNode(pm.users, node, pm.nodes)
+	rules, err := pm.pol.compileFilterRulesForNode(pm.users, node, pm.nodes, forMatchers)
 	if err != nil {
 		return nil, fmt.Errorf("compiling filter rules for node: %w", err)
 	}
 
 	// Cache the unreduced compiled rules
-	pm.compiledFilterRulesMap[node.ID()] = rules
+	if forMatchers {
+		pm.compiledFilterRulesMapMatchers[node.ID()] = rules
+	} else {
+		pm.compiledFilterRulesMap[node.ID()] = rules
+	}
 
 	return rules, nil
 }
@@ -520,8 +546,8 @@ func (pm *PolicyManager) filterForNodeLocked(node types.NodeView) ([]tailcfg.Fil
 		return rules, nil
 	}
 
-	// Get unreduced compiled rules
-	compiledRules, err := pm.compileFilterRulesForNodeLocked(node)
+	// Get unreduced compiled rules (not forMatchers)
+	compiledRules, err := pm.compileFilterRulesForNodeLocked(node, false)
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +598,7 @@ func (pm *PolicyManager) MatchersForNode(node types.NodeView) ([]matcher.Match, 
 	}
 
 	// For autogroup:self or via grants, get unreduced compiled rules and create matchers
-	compiledRules, err := pm.compileFilterRulesForNodeLocked(node)
+	compiledRules, err := pm.compileFilterRulesForNodeLocked(node, true)
 	if err != nil {
 		return nil, err
 	}
@@ -650,6 +676,7 @@ func (pm *PolicyManager) SetNodes(nodes views.Slice[types.NodeView]) (bool, erro
 			// This ensures fresh filter rules are generated for all nodes
 			clear(pm.sshPolicyMap)
 			clear(pm.compiledFilterRulesMap)
+			clear(pm.compiledFilterRulesMapMatchers)
 			clear(pm.filterRulesMap)
 		}
 		// Always return true when nodes changed, even if filter hash didn't change
@@ -1152,11 +1179,13 @@ func (pm *PolicyManager) invalidateAutogroupSelfCache(oldNodes, newNodes views.S
 		if found {
 			if _, affected := affectedUsers[nodeUserID]; affected {
 				delete(pm.compiledFilterRulesMap, nodeID)
+				delete(pm.compiledFilterRulesMapMatchers, nodeID)
 				delete(pm.filterRulesMap, nodeID)
 			}
 		} else {
 			// Node not found in either old or new list, clear it
 			delete(pm.compiledFilterRulesMap, nodeID)
+			delete(pm.compiledFilterRulesMapMatchers, nodeID)
 			delete(pm.filterRulesMap, nodeID)
 		}
 	}

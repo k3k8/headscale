@@ -261,7 +261,9 @@ func TestRoutesCompat(t *testing.T) {
 						users,
 						node.View(),
 						nodes.ViewSlice(),
+						false,
 					)
+
 					require.NoError(
 						t,
 						err,

@@ -133,9 +133,14 @@ func srcIPsWithRoutes(
 
 // compileFilterRules takes a set of nodes and an ACLPolicy and generates a
 // set of Tailscale compatible FilterRules used to allow traffic on clients.
+//
+// forMatchers selects which of the two consumers the rules are built for.
+// See destinationsToNetPortRange for why autogroup:internet destinations are
+// present in the matcher set but absent from the client-facing set.
 func (pol *Policy) compileFilterRules(
 	users types.Users,
 	nodes views.Slice[types.NodeView],
+	forMatchers bool,
 ) ([]tailcfg.FilterRule, error) {
 	if pol == nil || (pol.ACLs == nil && len(pol.Grants) == 0) {
 		return tailcfg.FilterAllowAll, nil
@@ -168,7 +173,7 @@ func (pol *Policy) compileFilterRules(
 		hasDangerAll := sourcesHaveDangerAll(grant.Sources)
 
 		for _, ipp := range grant.InternetProtocols {
-			destPorts := pol.destinationsToNetPortRange(users, nodes, grant.Destinations, ipp.Ports)
+			destPorts := pol.destinationsToNetPortRange(users, nodes, grant.Destinations, ipp.Ports, forMatchers)
 
 			if len(destPorts) > 0 {
 				rules = append(rules, tailcfg.FilterRule{
@@ -230,6 +235,7 @@ func (pol *Policy) destinationsToNetPortRange(
 	nodes views.Slice[types.NodeView],
 	dests Aliases,
 	ports []tailcfg.PortRange,
+	forMatchers bool,
 ) []tailcfg.NetPortRange {
 	var ret []tailcfg.NetPortRange
 
@@ -246,9 +252,19 @@ func (pol *Policy) destinationsToNetPortRange(
 			continue
 		}
 
-		// autogroup:internet does not generate packet filters - it's handled
-		// by exit node routing via AllowedIPs, not by packet filtering.
-		if ag, isAutoGroup := dest.(*AutoGroup); isAutoGroup && ag.Is(AutoGroupInternet) {
+		// autogroup:internet resolves to the set of public internet prefixes
+		// (everything except private and Tailscale ranges).
+		//
+		// Client-facing filters (forMatchers=false) must NOT contain these:
+		// Tailscale SaaS forwards exit traffic via AllowedIPs and the client's
+		// exit node selection, not via PacketFilter rules.
+		//
+		// Matcher-facing rules (forMatchers=true) MUST contain them. Matchers
+		// drive peer visibility (ReduceNodes) and route steering
+		// (ReduceRoutes); dropping the prefixes there makes Headscale hide the
+		// exit node and its routes from the client, turning the grant into a
+		// no-op.
+		if ag, isAutoGroup := dest.(*AutoGroup); isAutoGroup && ag.Is(AutoGroupInternet) && !forMatchers {
 			continue
 		}
 
@@ -288,6 +304,7 @@ func (pol *Policy) compileFilterRulesForNode(
 	users types.Users,
 	node types.NodeView,
 	nodes views.Slice[types.NodeView],
+	forMatchers bool,
 ) ([]tailcfg.FilterRule, error) {
 	if pol == nil {
 		return tailcfg.FilterAllowAll, nil
@@ -301,9 +318,10 @@ func (pol *Policy) compileFilterRulesForNode(
 	}
 
 	for _, grant := range grants {
-		res, err := pol.compileGrantWithAutogroupSelf(grant, users, node, nodes)
+		res, err := pol.compileGrantWithAutogroupSelf(grant, users, node, nodes, forMatchers)
 		if err != nil {
 			log.Trace().Err(err).Msgf("compiling ACL")
+
 			continue
 		}
 
@@ -323,6 +341,7 @@ func (pol *Policy) compileViaGrant(
 	users types.Users,
 	node types.NodeView,
 	nodes views.Slice[types.NodeView],
+	forMatchers bool,
 ) ([]tailcfg.FilterRule, error) {
 	// Check if the current node matches any of the via tags.
 	matchesVia := false
@@ -368,6 +387,14 @@ func (pol *Policy) compileViaGrant(
 			// through the client's exit node selection mechanism (AllowedIPs +
 			// ExitNodeOption), not through PacketFilter rules. Verified by
 			// golden captures GRANT-V14 through GRANT-V36.
+			//
+			// The matcher set is the exception: it drives peer visibility
+			// (ReduceNodes) and route steering (ReduceRoutes). Without the
+			// exit routes here, Headscale hides the exit node and its routes
+			// from the client and the grant becomes a no-op.
+			if forMatchers && d.Is(AutoGroupInternet) {
+				viaDstPrefixes = append(viaDstPrefixes, nodeExitRoutes...)
+			}
 		}
 	}
 
@@ -458,11 +485,12 @@ func (pol *Policy) compileGrantWithAutogroupSelf(
 	users types.Users,
 	node types.NodeView,
 	nodes views.Slice[types.NodeView],
+	forMatchers bool,
 ) ([]tailcfg.FilterRule, error) {
 	// Handle via route grants — filter rules only go to the node
 	// matching the via tag that actually advertises the destination subnets.
 	if len(grant.Via) > 0 {
-		return pol.compileViaGrant(grant, users, node, nodes)
+		return pol.compileViaGrant(grant, users, node, nodes, forMatchers)
 	}
 
 	var (
@@ -538,7 +566,7 @@ func (pol *Policy) compileGrantWithAutogroupSelf(
 			}
 
 			if !srcResolved.Empty() {
-				destPorts := pol.destinationsToNetPortRange(users, nodes, otherDests, ipp.Ports)
+				destPorts := pol.destinationsToNetPortRange(users, nodes, otherDests, ipp.Ports, forMatchers)
 
 				if len(destPorts) > 0 {
 					srcIPStrs := srcIPsWithRoutes(srcResolved, hasWildcard, hasDangerAll, nodes)

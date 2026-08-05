@@ -574,7 +574,9 @@ func testGrantSuccess(
 				users,
 				node.View(),
 				nodes.ViewSlice(),
+				false,
 			)
+
 			require.NoError(
 				t,
 				err,

@@ -893,12 +893,21 @@ func TestReduceNodesFromPolicy(t *testing.T) {
   ]
 }`,
 			node: n(1, "100.64.0.1", "mobile", "mobile"),
-			// autogroup:internet does not generate packet filters - it's handled
-			// by exit node routing via AllowedIPs, not by packet filtering.
-			// Only server is visible through the mobile -> server:80 rule.
+			// autogroup:internet still generates no client-facing packet
+			// filter — exit traffic is forwarded via AllowedIPs. It does
+			// generate matchers, which is what makes the exit node visible
+			// as a peer. Without visibility the client cannot select it and
+			// the grant is a no-op.
+			//
+			// This matches the sibling 0.0.0.0/0 and ::0/0 cases below:
+			// spelling the destination as autogroup:internet must not change
+			// which peers the client can see.
 			want: types.Nodes{
 				n(2, "100.64.0.2", "server", "server"),
+				n(3, "100.64.0.3", "exit", "server", "0.0.0.0/0", "::/0"),
 			},
+			// Both ACLs share the "mobile" source, so mergeFilterRules
+			// collapses them into a single rule and thus a single matcher.
 			wantMatchers: 1,
 		},
 		{

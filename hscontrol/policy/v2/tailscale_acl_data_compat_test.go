@@ -433,6 +433,7 @@ func testACLSuccess(
 				users,
 				node.View(),
 				nodes.ViewSlice(),
+				false,
 			)
 			require.NoError(
 				t,
