@@ -1,7 +1,12 @@
 # Fork maintenance guide
 
 Personal fork of headscale. `origin` = `juanfont/headscale` (upstream),
-`fork` = `k3k8/headscale` (ours). Currently based on **v0.29.3**.
+`fork` = `k3k8/headscale` (ours).
+
+> **Base is `origin/main`, which is 0.30.0 development, not a release.**
+> Releases live on `release-branch/0.NN`; `v0.29.3` is not an ancestor of
+> `main`. 0.30.0 removes the gRPC API, changes API errors to RFC 7807 and
+> changes `--output json` shape. Check dependent tooling before deploying.
 
 ## Branch structure
 
@@ -19,10 +24,10 @@ so `main` is the only branch to deploy from.
 Deliberately small. Everything else was upstreamed or fixed independently
 by upstream — see "History" below before adding anything here.
 
-| Area | Files | Why |
-| --- | --- | --- |
+| Area       | Files                                                   | Why                                                                                                                                                                                                    |
+| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | iOS naming | `util/apple_devices.go`, `state/state.go`, `db/node.go` | iOS reports `localhost` for every device, so several iPhones become localhost, localhost-1, localhost-2. `Hostinfo.DeviceModel` carries the real identity and upstream only uses it for log redaction. |
-| CI | `.github/workflows/` | Upstream-only workflows removed; `k3k8-build.yml` added. |
+| CI         | `.github/workflows/`                                    | Upstream-only workflows removed; `k3k8-build.yml` added.                                                                                                                                               |
 
 ### The iOS patch in one paragraph
 
@@ -31,7 +36,7 @@ except that a hostname carrying no device information is replaced by the
 device model. It is applied at all three GivenName derivation sites
 (`state.go` registration, `db/node.go` registration, and the MapRequest
 hostname update). `isAutoDerivedGivenName` takes the Hostinfo too and is
-evaluated *before* Hostinfo is overwritten — an iOS node legitimately has
+evaluated _before_ Hostinfo is overwritten — an iOS node legitimately has
 GivenName `iphone-15-pro` while its Hostname stays `localhost`, and
 comparing against `SanitizeHostname` alone misreads that as an admin
 rename.
@@ -123,11 +128,11 @@ Sources: <https://theapplewiki.com/wiki/Models>, <https://appledb.dev>
 Patches that used to live here and why they are gone. Kept so the same
 work is not done twice.
 
-| Patch | Fate |
-| --- | --- |
-| macOS hostname sanitisation | Upstream `d6dfdc10` (2026-04-17) routed hostname handling through `dnsname.SanitizeHostname`, which produces the same result. Fixes #3188, #2926, #2343, #2762, #2449. |
-| `invalid-<random>` replacement avoidance | Same commit removed the `invalid-` fallback entirely. |
-| Sequential duplicate naming | Upstream `a2c3ac09` (2026-04-17) added the same `base-1`, `base-2` collision bump in NodeStore. |
+| Patch                                     | Fate                                                                                                                                                                                                                                                 |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS hostname sanitisation               | Upstream `d6dfdc10` (2026-04-17) routed hostname handling through `dnsname.SanitizeHostname`, which produces the same result. Fixes #3188, #2926, #2343, #2762, #2449.                                                                               |
+| `invalid-<random>` replacement avoidance  | Same commit removed the `invalid-` fallback entirely.                                                                                                                                                                                                |
+| Sequential duplicate naming               | Upstream `a2c3ac09` (2026-04-17) added the same `base-1`, `base-2` collision bump in NodeStore.                                                                                                                                                      |
 | `autogroup:internet` exit node visibility | Upstream `c7a0ca70` (#3212, 2026-04-28) fixed it via `DestsIsTheInternet()` + `IsExitNode()` — cleaner than expanding 48 internet prefixes into the matcher set, and without the side effect of surfacing nodes that advertise public subnet routes. |
 
 Preserved at tags `backup/pre-v0.29-follow` and
