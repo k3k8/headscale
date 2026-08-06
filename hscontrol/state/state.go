@@ -39,7 +39,6 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/types/views"
-	"tailscale.com/util/dnsname"
 )
 
 const (
@@ -2013,11 +2012,13 @@ func (s *State) createAndSaveNewNode(params newNodeParams) (types.NodeView, erro
 	nodeToRegister.IPv4 = ipv4
 	nodeToRegister.IPv6 = ipv6
 
-	// Seed GivenName from the sanitised raw hostname. [NodeStore.PutNode]
-	// bumps on collision and falls back to "node" if the sanitised
-	// result is empty (pure non-ASCII / punctuation input).
+	// Seed GivenName from the sanitised raw hostname, substituting the
+	// device model for hostnames that identify nothing (iOS reports
+	// "localhost" for every device). [NodeStore.PutNode] bumps on
+	// collision and falls back to "node" if the sanitised result is
+	// empty (pure non-ASCII / punctuation input).
 	if nodeToRegister.GivenName == "" {
-		nodeToRegister.GivenName = dnsname.SanitizeHostname(nodeToRegister.Hostname)
+		nodeToRegister.GivenName = util.GivenNameFromHostinfo(nodeToRegister.Hostname, nodeToRegister.Hostinfo)
 	}
 
 	// New node - database first to get ID, then [NodeStore]
@@ -2997,12 +2998,16 @@ func (s *State) autoApproveNodes() ([]change.Change, error) {
 }
 
 // isAutoDerivedGivenName reports whether given matches what
-// dnsname.SanitizeHostname(hostname) would produce, optionally with a
-// [NodeStore] collision-bump "-N" suffix. It is used to detect whether a
-// GivenName has been admin-renamed (in which case it must not be
-// overwritten by client-side hostname changes).
-func isAutoDerivedGivenName(given, hostname string) bool {
-	base := dnsname.SanitizeHostname(hostname)
+// [util.GivenNameFromHostinfo] would produce for hostname and hi,
+// optionally with a [NodeStore] collision-bump "-N" suffix. It is used
+// to detect whether a GivenName has been admin-renamed (in which case
+// it must not be overwritten by client-side hostname changes).
+//
+// hi participates because the derivation substitutes the device model
+// for generic hostnames; an iOS node legitimately has GivenName
+// "iphone-15-pro" while its Hostname is "localhost".
+func isAutoDerivedGivenName(given, hostname string, hi *tailcfg.Hostinfo) bool {
+	base := util.GivenNameFromHostinfo(hostname, hi)
 	if given == base {
 		return true
 	}
@@ -3140,16 +3145,24 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 			// TODO(kradalby): evaluate if we need better comparing of hostinfo
 			// before we take the changes.
 			// NetInfo preservation has already been handled above before early return check
+			// Preserve an admin-renamed GivenName: only auto-derive when
+			// the current GivenName is still what the *previous* hostname
+			// and Hostinfo would produce (possibly with a "-N" collision
+			// bump). Evaluated before Hostinfo is overwritten, because the
+			// derivation reads DeviceModel.
+			autoDerived := isAutoDerivedGivenName(
+				currentNode.GivenName,
+				currentNode.Hostname,
+				currentNode.Hostinfo,
+			)
+
 			currentNode.Hostinfo = req.Hostinfo
 			if req.Hostinfo != nil && req.Hostinfo.Hostname != "" {
-				// Preserve an admin-renamed GivenName: only auto-derive when the
-				// current GivenName is still what SanitizeHostname of the old
-				// Hostname would produce (possibly with a "-N" collision bump).
-				autoDerived := isAutoDerivedGivenName(currentNode.GivenName, currentNode.Hostname)
-
 				currentNode.Hostname = req.Hostinfo.Hostname
 				if autoDerived {
-					currentNode.GivenName = dnsname.SanitizeHostname(req.Hostinfo.Hostname)
+					currentNode.GivenName = util.GivenNameFromHostinfo(
+						req.Hostinfo.Hostname, req.Hostinfo,
+					)
 					// [NodeStore.UpdateNode] auto-bumps GivenName on collision.
 				}
 			}

@@ -325,7 +325,7 @@ func RegisterNodeForTest(tx *gorm.DB, node types.Node, ipv4 *netip.Addr, ipv6 *n
 	node.IPv6 = ipv6
 
 	if node.GivenName == "" {
-		node.GivenName = dnsname.SanitizeHostname(node.Hostname)
+		node.GivenName = util.GivenNameFromHostinfo(node.Hostname, node.Hostinfo)
 		if node.GivenName == "" {
 			node.GivenName = "node"
 		}
