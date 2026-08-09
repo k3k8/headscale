@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
+	"tailscale.com/util/dnsname"
 	"tailscale.com/util/set"
 )
 
@@ -42,6 +44,7 @@ var (
 	errTrustedProxyZeroRange     = errors.New("0.0.0.0/0 and ::/0 are not allowed")
 	ErrNoPrefixConfigured        = errors.New("no IPv4 or IPv6 prefix configured, minimum one prefix is required")
 	ErrInvalidAllocationStrategy = errors.New("invalid prefix allocation strategy")
+	ErrBaseDomainRequired        = errors.New("dns.base_domain must be set when using MagicDNS (dns.magic_dns)")
 )
 
 type IPAllocationStrategy string
@@ -984,11 +987,17 @@ func (d *DNSConfig) splitResolvers() map[string][]*dnstype.Resolver {
 	return routes
 }
 
-func dnsToTailcfgDNS(dns DNSConfig) *tailcfg.DNSConfig {
+// BuildTailcfgDNSConfig converts a [DNSConfig] into the [tailcfg.DNSConfig]
+// that is handed to clients.
+//
+// It returns an error rather than terminating the process, because it also
+// runs on the SIGHUP reload path where a bad edit to the configuration file
+// must not take the running daemon down.
+func BuildTailcfgDNSConfig(dns DNSConfig) (*tailcfg.DNSConfig, error) {
 	cfg := tailcfg.DNSConfig{}
 
 	if dns.BaseDomain == "" && dns.MagicDNS {
-		log.Fatal().Msg("dns.base_domain must be set when using MagicDNS (dns.magic_dns)")
+		return nil, ErrBaseDomainRequired
 	}
 
 	cfg.Proxied = dns.MagicDNS
@@ -1009,7 +1018,7 @@ func dnsToTailcfgDNS(dns DNSConfig) *tailcfg.DNSConfig {
 
 	cfg.Domains = append(cfg.Domains, dns.SearchDomains...)
 
-	return &cfg
+	return &cfg, nil
 }
 
 // warnBanner prints a highly visible warning banner to the log output.
@@ -1179,6 +1188,11 @@ func LoadServerConfig() (*Config, error) {
 		return nil, err
 	}
 
+	tailcfgDNSConfig, err := BuildTailcfgDNSConfig(dnsConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	derpConfig := derpConfig()
 	logTailConfig := logtailConfig()
 
@@ -1254,7 +1268,7 @@ func LoadServerConfig() (*Config, error) {
 		TLS: tlsConfig(),
 
 		DNSConfig:        dnsConfig,
-		TailcfgDNSConfig: dnsToTailcfgDNS(dnsConfig),
+		TailcfgDNSConfig: tailcfgDNSConfig,
 
 		ACMEEmail: viper.GetString("acme_email"),
 		ACMEURL:   viper.GetString("acme_url"),
@@ -1449,6 +1463,101 @@ func (d *deprecator) Log() {
 	}
 }
 
+// viperMu serialises re-reads of the configuration file (the SIGHUP reload
+// path) against the places that still consult viper after startup. viper's
+// global state is not safe for concurrent read and write.
+var viperMu sync.RWMutex
+
+// ViperString reads a string key from the global viper configuration under the
+// shared lock. Anything that reads viper after startup must go through this
+// rather than calling viper directly, so it cannot race with
+// [ReloadConfigFile].
+func ViperString(key string) string {
+	viperMu.RLock()
+	defer viperMu.RUnlock()
+
+	return viper.GetString(key)
+}
+
+// ReloadConfigFile re-reads the configuration file that was loaded at startup.
+// Only the sections explicitly re-parsed afterwards take effect; the rest of
+// the running [Config] is left alone.
+func ReloadConfigFile() error {
+	viperMu.Lock()
+	defer viperMu.Unlock()
+
+	if err := viper.ReadInConfig(); err != nil {
+		return fmt.Errorf("re-reading config file: %w", err)
+	}
+
+	return nil
+}
+
+// DNSConfigFromViper parses the dns section out of the currently loaded
+// configuration.
+func DNSConfigFromViper() (DNSConfig, error) {
+	viperMu.RLock()
+	defer viperMu.RUnlock()
+
+	return dns()
+}
+
+// OIDCRestrictions is the set of OIDC allow-lists that can be swapped at
+// runtime without rebuilding the OIDC provider.
+type OIDCRestrictions struct {
+	Domains []string
+	Users   []string
+	Groups  []string
+}
+
+// Equal reports whether two restriction sets hold the same entries.
+func (r OIDCRestrictions) Equal(other OIDCRestrictions) bool {
+	return slices.Equal(r.Domains, other.Domains) &&
+		slices.Equal(r.Users, other.Users) &&
+		slices.Equal(r.Groups, other.Groups)
+}
+
+// OIDCRestrictionsFromViper reads the oidc allow-lists out of the currently
+// loaded configuration.
+func OIDCRestrictionsFromViper() OIDCRestrictions {
+	viperMu.RLock()
+	defer viperMu.RUnlock()
+
+	return OIDCRestrictions{
+		Domains: viper.GetStringSlice("oidc.allowed_domains"),
+		Users:   viper.GetStringSlice("oidc.allowed_users"),
+		Groups:  viper.GetStringSlice("oidc.allowed_groups"),
+	}
+}
+
+// oidcRestrictionsMu guards the allow-list slices of [OIDCConfig]. The SIGHUP
+// reload path replaces them while authorisation requests are reading them.
+var oidcRestrictionsMu sync.RWMutex
+
+// Restrictions returns the current OIDC allow-lists. Safe for concurrent use
+// with [OIDCConfig.SetRestrictions].
+func (o *OIDCConfig) Restrictions() OIDCRestrictions {
+	oidcRestrictionsMu.RLock()
+	defer oidcRestrictionsMu.RUnlock()
+
+	return OIDCRestrictions{
+		Domains: o.AllowedDomains,
+		Users:   o.AllowedUsers,
+		Groups:  o.AllowedGroups,
+	}
+}
+
+// SetRestrictions replaces the OIDC allow-lists. Safe for concurrent use with
+// [OIDCConfig.Restrictions].
+func (o *OIDCConfig) SetRestrictions(r OIDCRestrictions) {
+	oidcRestrictionsMu.Lock()
+	defer oidcRestrictionsMu.Unlock()
+
+	o.AllowedDomains = r.Domains
+	o.AllowedUsers = r.Users
+	o.AllowedGroups = r.Groups
+}
+
 // tailcfgDNSMu guards concurrent access to the mutable ExtraRecords of
 // [Config.TailcfgDNSConfig] between the extra-records file watcher (writer)
 // and the per-client map builds that clone it (readers). It is a package-level
@@ -1476,5 +1585,82 @@ func (c *Config) SetExtraRecords(records []tailcfg.DNSRecord) {
 
 	if c.TailcfgDNSConfig != nil {
 		c.TailcfgDNSConfig.ExtraRecords = records
+	}
+}
+
+// SetDNSConfig replaces both the parsed dns section and the tailcfg view of it
+// that is handed to clients. Used by the SIGHUP reload path. Safe for
+// concurrent use with [Config.CloneTailcfgDNSConfig], [Config.SetExtraRecords]
+// and [Config.DebugClone].
+func (c *Config) SetDNSConfig(dns DNSConfig, tailcfgDNS *tailcfg.DNSConfig) {
+	tailcfgDNSMu.Lock()
+	defer tailcfgDNSMu.Unlock()
+
+	c.DNSConfig = dns
+	c.TailcfgDNSConfig = tailcfgDNS
+}
+
+// DebugClone returns a shallow copy of the configuration with the mutable DNS
+// sections copied under the lock, so debug handlers can serialise it while a
+// reload or an extra-records update is in flight.
+func (c *Config) DebugClone() *Config {
+	tailcfgDNSMu.RLock()
+	defer tailcfgDNSMu.RUnlock()
+
+	clone := *c
+	if c.TailcfgDNSConfig != nil {
+		clone.TailcfgDNSConfig = c.TailcfgDNSConfig.Clone()
+	}
+
+	return &clone
+}
+
+// ApplyMagicDNSRoutes injects the reverse-DNS routes MagicDNS needs into d,
+// based on the configured IP prefixes. It is a no-op unless d is proxied
+// (i.e. MagicDNS is enabled).
+//
+// This has to be re-applied every time the tailcfg DNS config is rebuilt --
+// see the comment inside for what happens on clients when these routes go
+// missing.
+func (c *Config) ApplyMagicDNSRoutes(d *tailcfg.DNSConfig) {
+	if d == nil || !d.Proxied {
+		return
+	}
+
+	// TODO(kradalby): revisit why this takes a list.
+	var magicDNSDomains []dnsname.FQDN
+	if c.PrefixV4 != nil {
+		magicDNSDomains = append(
+			magicDNSDomains,
+			util.GenerateIPv4DNSRootDomain(*c.PrefixV4)...,
+		)
+	}
+
+	if c.PrefixV6 != nil {
+		magicDNSDomains = append(
+			magicDNSDomains,
+			util.GenerateIPv6DNSRootDomain(*c.PrefixV6)...,
+		)
+	}
+
+	// we might have routes already from Split DNS
+	if d.Routes == nil {
+		d.Routes = make(map[string][]*dnstype.Resolver)
+	}
+
+	for _, domain := range magicDNSDomains {
+		// Empty non-nil slice rather than nil: tailcfg.DNSConfig.Clone
+		// and dns.Config.Clone in tailscale drop map entries whose
+		// value is nil (see tailscale.com/tailcfg/tailcfg_clone.go and
+		// tailscale.com/net/dns/dns_clone.go: `if sv == nil { continue }`).
+		// Sending nil here caused the client's wgengine LinkChange:major
+		// handler to clobber /etc/resolv.conf on every tunnel-IP rebind
+		// — the handler reapplies a Clone of lastDNSConfig and the magic
+		// DNS routes vanish, taking the resolver with them for ~6 min
+		// until the next route-changing netmap. Empty slice survives
+		// Clone and carries the same "resolve locally" semantics
+		// (tailscale.com/ipn/ipnlocal/node_backend.go:869 documents the
+		// empty-resolver Routes form for Issue 2706).
+		d.Routes[domain.WithoutTrailingDot()] = []*dnstype.Resolver{}
 	}
 }

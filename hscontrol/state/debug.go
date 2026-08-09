@@ -189,7 +189,10 @@ func (s *State) DebugRegistrationCache() map[string]any {
 
 // DebugConfig returns debug information about the current configuration.
 func (s *State) DebugConfig() *types.Config {
-	return s.cfg
+	// The DNS section is swapped at runtime by the extra-records watcher and
+	// the SIGHUP reload, so hand out a copy taken under the lock rather than
+	// letting the serialiser walk the live one.
+	return s.cfg.DebugClone()
 }
 
 // DebugPolicy returns the current policy data as a string.
