@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 	"tailscale.com/tailcfg"
 )
@@ -158,7 +157,7 @@ func derpRandom() *rand.Rand {
 	defer derpRandomMu.Unlock()
 
 	if derpRandomInst == nil {
-		seed := cmp.Or(viper.GetString("dns.base_domain"), time.Now().String())
+		seed := cmp.Or(types.ViperString("dns.base_domain"), time.Now().String())
 		derpRandomInst = rand.New(rand.NewSource(int64(crc64.Checksum([]byte(seed), crc64Table)))) //nolint:gosec // weak random is fine for DERP scrambling
 	}
 

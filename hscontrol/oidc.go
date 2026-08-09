@@ -572,8 +572,12 @@ func doOIDCAuthorization(
 	cfg *types.OIDCConfig,
 	claims *types.OIDCClaims,
 ) error {
-	if len(cfg.AllowedGroups) > 0 {
-		err := validateOIDCAllowedGroups(cfg.AllowedGroups, claims)
+	// Read the allow-lists once, under the lock: SIGHUP can swap them while
+	// this request is in flight, and every check below must see the same set.
+	allowed := cfg.Restrictions()
+
+	if len(allowed.Groups) > 0 {
+		err := validateOIDCAllowedGroups(allowed.Groups, claims)
 		if err != nil {
 			return err
 		}
@@ -581,20 +585,20 @@ func doOIDCAuthorization(
 
 	trustEmail := !cfg.EmailVerifiedRequired || bool(claims.EmailVerified)
 
-	hasEmailTests := len(cfg.AllowedDomains) > 0 || len(cfg.AllowedUsers) > 0
+	hasEmailTests := len(allowed.Domains) > 0 || len(allowed.Users) > 0
 	if !trustEmail && hasEmailTests {
 		return NewHTTPError(http.StatusUnauthorized, "unverified email", errOIDCUnverifiedEmail)
 	}
 
-	if len(cfg.AllowedDomains) > 0 {
-		err := validateOIDCAllowedDomains(cfg.AllowedDomains, claims)
+	if len(allowed.Domains) > 0 {
+		err := validateOIDCAllowedDomains(allowed.Domains, claims)
 		if err != nil {
 			return err
 		}
 	}
 
-	if len(cfg.AllowedUsers) > 0 {
-		err := validateOIDCAllowedUsers(cfg.AllowedUsers, claims)
+	if len(allowed.Users) > 0 {
+		err := validateOIDCAllowedUsers(allowed.Users, claims)
 		if err != nil {
 			return err
 		}

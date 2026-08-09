@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -44,9 +45,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"tailscale.com/envknob"
 	"tailscale.com/tailcfg"
-	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
-	"tailscale.com/util/dnsname"
 )
 
 var (
@@ -186,44 +185,7 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 
 	app.authProvider = authProvider
 
-	if app.cfg.TailcfgDNSConfig != nil && app.cfg.TailcfgDNSConfig.Proxied { // if MagicDNS
-		// TODO(kradalby): revisit why this takes a list.
-		var magicDNSDomains []dnsname.FQDN
-		if cfg.PrefixV4 != nil {
-			magicDNSDomains = append(
-				magicDNSDomains,
-				util.GenerateIPv4DNSRootDomain(*cfg.PrefixV4)...,
-			)
-		}
-
-		if cfg.PrefixV6 != nil {
-			magicDNSDomains = append(
-				magicDNSDomains,
-				util.GenerateIPv6DNSRootDomain(*cfg.PrefixV6)...,
-			)
-		}
-
-		// we might have routes already from Split DNS
-		if app.cfg.TailcfgDNSConfig.Routes == nil {
-			app.cfg.TailcfgDNSConfig.Routes = make(map[string][]*dnstype.Resolver)
-		}
-
-		for _, d := range magicDNSDomains {
-			// Empty non-nil slice rather than nil: tailcfg.DNSConfig.Clone
-			// and dns.Config.Clone in tailscale drop map entries whose
-			// value is nil (see tailscale.com/tailcfg/tailcfg_clone.go and
-			// tailscale.com/net/dns/dns_clone.go: `if sv == nil { continue }`).
-			// Sending nil here caused the client's wgengine LinkChange:major
-			// handler to clobber /etc/resolv.conf on every tunnel-IP rebind
-			// — the handler reapplies a Clone of lastDNSConfig and the magic
-			// DNS routes vanish, taking the resolver with them for ~6 min
-			// until the next route-changing netmap. Empty slice survives
-			// Clone and carries the same "resolve locally" semantics
-			// (tailscale.com/ipn/ipnlocal/node_backend.go:869 documents the
-			// empty-resolver Routes form for Issue 2706).
-			app.cfg.TailcfgDNSConfig.Routes[d.WithoutTrailingDot()] = []*dnstype.Resolver{}
-		}
-	}
+	app.cfg.ApplyMagicDNSRoutes(app.cfg.TailcfgDNSConfig)
 
 	if cfg.DERP.ServerEnabled {
 		derpServerKey, err := readOrCreatePrivateKey(cfg.DERP.ServerPrivateKeyPath)
@@ -510,6 +472,102 @@ func (h *Headscale) createRouter(apiV1Mux, apiV2Mux http.Handler) *chi.Mux {
 	return r
 }
 
+// reloadDNSConfig re-parses the dns section of the configuration file and, if
+// anything actually changed, swaps it into the running configuration. The
+// caller is responsible for notifying nodes.
+//
+// Two keys are deliberately pinned to their startup values:
+//
+//   - dns.base_domain is also held in [types.Config.BaseDomain] and baked into
+//     every node's FQDN, so changing it at runtime would leave the tailnet
+//     half-migrated.
+//   - dns.extra_records_path is wired to a file watcher during startup, which
+//     this path does not re-create.
+//
+// A change to either is logged and ignored.
+func (h *Headscale) reloadDNSConfig() (bool, error) {
+	dnsCfg, err := types.DNSConfigFromViper()
+	if err != nil {
+		return false, fmt.Errorf("parsing dns config: %w", err)
+	}
+
+	running := h.cfg.DNSConfig
+
+	for _, pinned := range []struct {
+		key        string
+		running    string
+		configured *string
+	}{
+		{"dns.base_domain", running.BaseDomain, &dnsCfg.BaseDomain},
+		{"dns.extra_records_path", running.ExtraRecordsPath, &dnsCfg.ExtraRecordsPath},
+	} {
+		if *pinned.configured == pinned.running {
+			continue
+		}
+
+		log.Warn().
+			Str("running", pinned.running).
+			Str("configured", *pinned.configured).
+			Msgf("%s cannot be changed at runtime, ignoring; restart headscale to apply", pinned.key)
+
+		*pinned.configured = pinned.running
+	}
+
+	tailcfgDNS, err := types.BuildTailcfgDNSConfig(dnsCfg)
+	if err != nil {
+		return false, fmt.Errorf("building tailcfg dns config: %w", err)
+	}
+
+	// MagicDNS reverse-DNS routes live outside the config file and have to be
+	// re-injected every time the tailcfg config is rebuilt.
+	h.cfg.ApplyMagicDNSRoutes(tailcfgDNS)
+
+	// When extra records come from a watched file, that file -- not the config
+	// file -- is the source of truth for them.
+	if h.extraRecordMan != nil {
+		tailcfgDNS.ExtraRecords = h.extraRecordMan.Records()
+	}
+
+	// Both sides are produced by the same builder, so a structural comparison
+	// is stable here. Skipping the no-op case matters because Headplane sends
+	// a SIGHUP after every configuration write, including ACL-only ones.
+	if reflect.DeepEqual(h.cfg.CloneTailcfgDNSConfig(), tailcfgDNS) {
+		log.Debug().Msg("DNS configuration unchanged, not notifying nodes")
+
+		return false, nil
+	}
+
+	h.cfg.SetDNSConfig(dnsCfg, tailcfgDNS)
+	log.Info().Msg("DNS configuration reloaded")
+
+	return true, nil
+}
+
+// reloadOIDCRestrictions re-parses the oidc allow-lists and swaps them into the
+// running configuration. The OIDC provider itself is not rebuilt: it holds a
+// pointer to the same [types.OIDCConfig], so the new lists apply from the next
+// authorisation onwards.
+//
+// Everything else under oidc (issuer, client id, secret, PKCE) still requires a
+// restart, because changing it means re-negotiating with the identity provider.
+func (h *Headscale) reloadOIDCRestrictions() {
+	if h.cfg.OIDC.Issuer == "" {
+		return
+	}
+
+	next := types.OIDCRestrictionsFromViper()
+	if h.cfg.OIDC.Restrictions().Equal(next) {
+		return
+	}
+
+	h.cfg.OIDC.SetRestrictions(next)
+	log.Info().
+		Int("domains", len(next.Domains)).
+		Int("users", len(next.Users)).
+		Int("groups", len(next.Groups)).
+		Msg("OIDC restrictions reloaded")
+}
+
 // Serve launches the HTTP servers that run Headscale and its API.
 //
 //nolint:gocyclo // complex server startup function
@@ -774,7 +832,22 @@ func (h *Headscale) Serve() error {
 			case syscall.SIGHUP:
 				log.Info().
 					Str("signal", sig.String()).
-					Msg("Received SIGHUP, reloading ACL policy")
+					Msg("Received SIGHUP, reloading configuration and ACL policy")
+
+				// Re-read the configuration file once, then let each
+				// reloadable section pick its values out of it. A bad edit
+				// is logged and skipped: it must never take the daemon down.
+				if err := types.ReloadConfigFile(); err != nil {
+					log.Error().Err(err).Msg("reloading configuration file")
+				} else {
+					if changed, err := h.reloadDNSConfig(); err != nil {
+						log.Error().Err(err).Msg("reloading DNS configuration")
+					} else if changed {
+						h.Change(change.DNSConfig())
+					}
+
+					h.reloadOIDCRestrictions()
+				}
 
 				if h.cfg.Policy.IsEmpty() {
 					continue
