@@ -135,6 +135,14 @@ derp:
 # Disables the automatic check for headscale updates on startup
 disable_check_updates: false
 
+# Watch this configuration file and reload the sections that can be applied
+# without a restart whenever it changes on disk. This covers the `dns` section
+# and the `oidc.allowed_*` lists; everything else still needs a restart.
+#
+# The same reload also runs on SIGHUP, so set this to false if you would rather
+# apply configuration changes explicitly.
+config_watch: true
+
 # Node lifecycle configuration.
 node:
   # Default key expiry for non-tagged nodes, regardless of registration method
