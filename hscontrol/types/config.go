@@ -123,6 +123,10 @@ type Config struct {
 	Log                 LogConfig
 	DisableUpdateCheck  bool
 
+	// WatchConfigFile enables reloading the reloadable sections of the
+	// configuration file whenever it changes on disk, without a SIGHUP.
+	WatchConfigFile bool
+
 	Database DatabaseConfig
 
 	DERP DERPConfig
@@ -443,6 +447,10 @@ func LoadConfig(path string, isFile bool) error {
 
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", TextLogFormat)
+
+	// Reload the reloadable sections of the configuration file whenever it
+	// changes on disk. Set to false to require an explicit SIGHUP.
+	viper.SetDefault("config_watch", true)
 
 	viper.SetDefault("dns.magic_dns", true)
 	viper.SetDefault("dns.base_domain", "")
@@ -1234,6 +1242,7 @@ func LoadServerConfig() (*Config, error) {
 		MetricsAddr:        viper.GetString("metrics_listen_addr"),
 		TrustedProxies:     trusted,
 		DisableUpdateCheck: false,
+		WatchConfigFile:    viper.GetBool("config_watch"),
 
 		PrefixV4:     prefix4,
 		PrefixV6:     prefix6,
@@ -1477,6 +1486,15 @@ func ViperString(key string) string {
 	defer viperMu.RUnlock()
 
 	return viper.GetString(key)
+}
+
+// ConfigFilePath returns the configuration file viper loaded, or an empty
+// string if the configuration came from defaults and the environment only.
+func ConfigFilePath() string {
+	viperMu.RLock()
+	defer viperMu.RUnlock()
+
+	return viper.ConfigFileUsed()
 }
 
 // ReloadConfigFile re-reads the configuration file that was loaded at startup.

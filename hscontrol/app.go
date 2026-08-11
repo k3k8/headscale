@@ -472,6 +472,28 @@ func (h *Headscale) createRouter(apiV1Mux, apiV2Mux http.Handler) *chi.Mux {
 	return r
 }
 
+// reloadConfigSections re-reads the configuration file and re-applies the
+// sections that can be changed without a restart, notifying nodes if the DNS
+// configuration actually changed.
+//
+// Both SIGHUP and the configuration file watcher come through here. Every
+// failure is logged and swallowed: a bad edit must never take the daemon down.
+func (h *Headscale) reloadConfigSections() {
+	if err := types.ReloadConfigFile(); err != nil {
+		log.Error().Err(err).Msg("reloading configuration file")
+		return
+	}
+
+	changed, err := h.reloadDNSConfig()
+	if err != nil {
+		log.Error().Err(err).Msg("reloading DNS configuration")
+	} else if changed {
+		h.Change(change.DNSConfig())
+	}
+
+	h.reloadOIDCRestrictions()
+}
+
 // reloadDNSConfig re-parses the dns section of the configuration file and, if
 // anything actually changed, swaps it into the running configuration. The
 // caller is responsible for notifying nodes.
@@ -650,6 +672,25 @@ func (h *Headscale) Serve() error {
 
 		go h.extraRecordMan.Run()
 		defer h.extraRecordMan.Close()
+	}
+
+	// Watch the configuration file so the reloadable sections apply without a
+	// SIGHUP. This is what makes a Kubernetes ConfigMap update land on its own:
+	// kubelet republishes the volume, and we pick it up from the directory
+	// watch. A failure here is not fatal, SIGHUP still works.
+	if h.cfg.WatchConfigFile {
+		if configPath := types.ConfigFilePath(); configPath != "" {
+			configWatch, err := newConfigWatcher(configPath, h.reloadConfigSections)
+			if err != nil {
+				log.Error().Err(err).Str("path", configPath).
+					Msg("could not watch the configuration file, falling back to SIGHUP only")
+			} else {
+				log.Info().Str("path", configPath).Msg("watching configuration file for changes")
+
+				go configWatch.Run()
+				defer configWatch.Close()
+			}
+		}
 	}
 
 	// Start all scheduled tasks, e.g. expiring nodes, derp updates and
@@ -834,20 +875,7 @@ func (h *Headscale) Serve() error {
 					Str("signal", sig.String()).
 					Msg("Received SIGHUP, reloading configuration and ACL policy")
 
-				// Re-read the configuration file once, then let each
-				// reloadable section pick its values out of it. A bad edit
-				// is logged and skipped: it must never take the daemon down.
-				if err := types.ReloadConfigFile(); err != nil {
-					log.Error().Err(err).Msg("reloading configuration file")
-				} else {
-					if changed, err := h.reloadDNSConfig(); err != nil {
-						log.Error().Err(err).Msg("reloading DNS configuration")
-					} else if changed {
-						h.Change(change.DNSConfig())
-					}
-
-					h.reloadOIDCRestrictions()
-				}
+				h.reloadConfigSections()
 
 				if h.cfg.Policy.IsEmpty() {
 					continue

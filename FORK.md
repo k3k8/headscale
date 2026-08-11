@@ -27,6 +27,7 @@ by upstream — see "History" below before adding anything here.
 | Area       | Files                                                   | Why                                                                                                                                                                                                    |
 | ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | iOS naming | `util/apple_devices.go`, `state/state.go`, `db/node.go` | iOS reports `localhost` for every device, so several iPhones become localhost, localhost-1, localhost-2. `Hostinfo.DeviceModel` carries the real identity and upstream only uses it for log redaction. |
+| Config reload | `app.go`, `types/config.go`, `config_watcher.go`     | Upstream only reloads the ACL policy, so `dns` and `oidc.allowed_*` edits silently did nothing until a restart. See below.                                                                             |
 | CI         | `.github/workflows/`                                    | Upstream-only workflows removed; `k3k8-build.yml` added.                                                                                                                                               |
 
 ### The iOS patch in one paragraph
@@ -44,6 +45,20 @@ rename.
 `TestGivenNameFromHostinfoMatchesSanitize` pins the contract that
 non-generic hostnames pass through untouched, so upstream changes to
 `SanitizeHostname` keep flowing through.
+
+### The config reload patch in one paragraph
+
+Upstream's SIGHUP handler reloads the ACL policy and nothing else, so a
+management UI that writes `config.yaml` reports success while the tailnet
+keeps serving the configuration the process started with. `dns` and the
+`oidc.allowed_*` lists are now re-parsed and swapped in, on SIGHUP and —
+when `config_watch` is true, the default — whenever the file changes on
+disk. The watcher watches the parent directory as well as the file so a
+Kubernetes ConfigMap revision swap (`..data` symlink rename) is picked up;
+that is the whole point of it. `dns.base_domain` and
+`dns.extra_records_path` stay pinned to their startup values because they
+are baked into node FQDNs and into a file watcher respectively. Everything
+else in the file still requires a restart.
 
 ## Tracking upstream
 
