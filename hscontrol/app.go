@@ -479,7 +479,8 @@ func (h *Headscale) createRouter(apiV1Mux, apiV2Mux http.Handler) *chi.Mux {
 // Both SIGHUP and the configuration file watcher come through here. Every
 // failure is logged and swallowed: a bad edit must never take the daemon down.
 func (h *Headscale) reloadConfigSections() {
-	if err := types.ReloadConfigFile(); err != nil {
+	err := types.ReloadConfigFile()
+	if err != nil {
 		log.Error().Err(err).Msg("reloading configuration file")
 		return
 	}

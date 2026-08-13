@@ -24,11 +24,11 @@ so `main` is the only branch to deploy from.
 Deliberately small. Everything else was upstreamed or fixed independently
 by upstream — see "History" below before adding anything here.
 
-| Area       | Files                                                   | Why                                                                                                                                                                                                    |
-| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| iOS naming | `util/apple_devices.go`, `state/state.go`, `db/node.go` | iOS reports `localhost` for every device, so several iPhones become localhost, localhost-1, localhost-2. `Hostinfo.DeviceModel` carries the real identity and upstream only uses it for log redaction. |
-| Config reload | `app.go`, `types/config.go`, `config_watcher.go`     | Upstream only reloads the ACL policy, so `dns` and `oidc.allowed_*` edits silently did nothing until a restart. See below.                                                                             |
-| CI         | `.github/workflows/`                                    | Upstream-only workflows removed; `k3k8-build.yml` added.                                                                                                                                               |
+| Area          | Files                                                   | Why                                                                                                                                                                                                    |
+| ------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| iOS naming    | `util/apple_devices.go`, `state/state.go`, `db/node.go` | iOS reports `localhost` for every device, so several iPhones become localhost, localhost-1, localhost-2. `Hostinfo.DeviceModel` carries the real identity and upstream only uses it for log redaction. |
+| Config reload | `app.go`, `types/config.go`, `config_watcher.go`        | Upstream only reloads the ACL policy, so `dns` and `oidc.allowed_*` edits silently did nothing until a restart. See below.                                                                             |
+| CI            | `.github/workflows/`                                    | Upstream-only workflows removed; `k3k8-build.yml` added.                                                                                                                                               |
 
 ### The iOS patch in one paragraph
 
