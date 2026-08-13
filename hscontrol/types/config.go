@@ -1504,7 +1504,8 @@ func ReloadConfigFile() error {
 	viperMu.Lock()
 	defer viperMu.Unlock()
 
-	if err := viper.ReadInConfig(); err != nil {
+	err := viper.ReadInConfig()
+	if err != nil {
 		return fmt.Errorf("re-reading config file: %w", err)
 	}
 

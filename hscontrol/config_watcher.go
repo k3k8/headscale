@@ -80,18 +80,21 @@ func newConfigWatcher(path string, onChange func()) (*configWatcher, error) {
 	}
 
 	// Seed the hash so the first spurious event does not look like a change.
-	if hash, err := hashFile(cw.path); err == nil {
+	hash, err := hashFile(cw.path)
+	if err == nil {
 		cw.hash = hash
 	}
 
 	// The directory watch is the one that must succeed: it is what survives an
 	// atomic replace. The file watch is an optimisation for in-place writes.
-	if err := watcher.Add(cw.dir); err != nil {
+	err = watcher.Add(cw.dir)
+	if err != nil {
 		watcher.Close()
 		return nil, fmt.Errorf("watching configuration directory %s: %w", cw.dir, err)
 	}
 
-	if err := watcher.Add(cw.path); err != nil {
+	err = watcher.Add(cw.path)
+	if err != nil {
 		log.Debug().Err(err).Str("path", cw.path).
 			Msg("could not watch configuration file directly, relying on directory watch")
 	}
@@ -144,7 +147,9 @@ func (c *configWatcher) Run() {
 			// working regardless, so a failure here is not fatal.
 			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Create) {
 				_ = c.watcher.Remove(c.path)
-				if err := c.watcher.Add(c.path); err != nil {
+
+				err := c.watcher.Add(c.path)
+				if err != nil {
 					log.Trace().Err(err).Str("path", c.path).
 						Msg("could not re-watch configuration file, directory watch still active")
 				}
