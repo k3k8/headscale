@@ -1,9 +1,13 @@
 # Fork maintenance guide
 
-Personal fork of headscale. `origin` = `juanfont/headscale` (upstream),
-`fork` = `k3k8/headscale` (ours).
+Personal fork of headscale. `origin` = `k3k8/headscale` (ours),
+`upstream` = `juanfont/headscale`.
 
-> **Base is `origin/main`, which is 0.30.0 development, not a release.**
+> `upstream` is fetch-only: its push URL is set to `no_push` so a stray
+> `git push` cannot reach juanfont/headscale. Re-apply with
+> `git remote set-url --push upstream no_push` if you ever recreate it.
+
+> **Base is `upstream/main`, which is 0.30.0 development, not a release.**
 > Releases live on `release-branch/0.NN`; `v0.29.3` is not an ancestor of
 > `main`. 0.30.0 removes the gRPC API, changes API errors to RFC 7807 and
 > changes `--output json` shape. Check dependent tooling before deploying.
@@ -97,7 +101,7 @@ nix develop --command go test ./hscontrol/...
 gofmt -l hscontrol/
 
 # 5. Push
-git push fork main feat/ios-device-hostname feat/k3k8-ci
+git push origin main feat/ios-device-hostname feat/k3k8-ci
 ```
 
 For a large jump, resetting `main` to `origin/main` and re-applying is
@@ -105,23 +109,23 @@ often faster. Tag first so it stays reversible:
 
 ```bash
 git tag backup/pre-<version>-follow main
-git reset --hard origin/main
+git reset --hard upstream/main
 ```
 
 ## Building and deploying
 
 ```bash
 # A tag triggers the k3k8 Build workflow → ghcr.io/k3k8/headscale:<tag>
-git tag v0.29.3-k3k8.1
-git push fork refs/tags/v0.29.3-k3k8.1
+git tag v0.29.3-k3k8.2
+git push origin refs/tags/v0.29.3-k3k8.2
 
 # On the server
-docker pull ghcr.io/k3k8/headscale:v0.29.3-k3k8.1
+docker pull ghcr.io/k3k8/headscale:v0.29.3-k3k8.2
 ```
 
 Tag convention: `v{upstream_version}-k3k8.{patch}`.
 
-> Push tags **individually** (`git push fork refs/tags/<tag>`), not with
+> Push tags **individually** (`git push origin refs/tags/<tag>`), not with
 > `--tags`. GitHub does not fire workflows when many tags arrive at once,
 > which is why the first fork push produced no build.
 
